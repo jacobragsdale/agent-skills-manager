@@ -55,29 +55,25 @@ uv run skills/agent-create-skill/scripts/validate_skill.py skills/<skill-name>
 Run the Step 5 trigger test — including the collision test against every
 existing skill's description — and show the user the table.
 
-## Step 3 — Push and open the PR
+## Step 3 — Commit and push (the commit message IS the proposal)
 
-The `AGENT_SKILLS_PAT` env var holds an Azure DevOps PAT. Never write it to
-disk or into git config; pass it per command:
-
-```bash
-B64=$(printf ':%s' "$AGENT_SKILLS_PAT" | base64)
-git add skills/<skill-name> && git commit -m "skills/<skill-name>: propose new skill"
-git -c "http.extraheader=AUTHORIZATION: Basic $B64" push origin skill/<skill-name>
-```
-
-Create the PR (derive org/project/repo from `git remote get-url origin`):
+No credentials or API calls are needed — a plain `git push` uses the
+machine's cached corporate sign-in, and the maintainer's nightly job opens
+a pull request from every pushed `skill/*` branch, using the branch tip's
+commit message as the PR description. So write the full proposal into the
+commit message:
 
 ```bash
-curl -sf -X POST -H "Authorization: Basic $B64" -H "Content-Type: application/json" \
-  "https://dev.azure.com/<org>/<project>/_apis/git/repositories/<repo>/pullrequests?api-version=7.1" \
-  -d '{"sourceRefName":"refs/heads/skill/<skill-name>","targetRefName":"refs/heads/main","title":"skills: propose <skill-name>","description":"<see below>"}'
+git add skills/<skill-name>
+git commit -m "skills: propose <skill-name>" -m "<proposal body>"
+git push origin skill/<skill-name>
 ```
 
-PR description must include: the ten-word job, the verified struggle that
-motivated it (concrete, from the interview), the library fit analysis (the
-nearest existing skills and why each doesn't cover this), the trigger-test
-table including the collision test, and the proposer's name.
+The proposal body (second `-m`) must include: the ten-word job, the
+verified struggle that motivated it (concrete, from the interview), the
+library fit analysis (the nearest existing skills and why each doesn't
+cover this), the trigger-test table including the collision test, and the
+proposer's name. A proposal without the fit analysis gets bounced.
 
 ## Step 4 — Leave the clone clean
 
@@ -85,7 +81,9 @@ table including the collision test, and the proposer's name.
 git checkout main && git reset --hard origin/main
 ```
 
-Give the user the PR link and tell them a maintainer will review it.
+Tell the user their proposal is pushed and a pull request will be opened
+automatically by the nightly maintainer job — they'll see it in the repo
+within a day, and a maintainer will review it.
 
 ## Improving this skill
 

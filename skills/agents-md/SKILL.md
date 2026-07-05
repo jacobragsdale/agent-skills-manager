@@ -86,7 +86,7 @@ READ `references/template.md` and fill it. Style rules:
 - One real 3–10-line code snippet from the repo beats paragraphs describing
   style.
 - Formatting/style rules belong to linters and hooks, not this file (for
-  Python repos, the `python-uv-setup` skill wires those). If a rule must
+  Python repos, the `python-standards` skill wires those). If a rule must
   never be violated, it needs CI or a hook; prose is advisory.
 - Boundaries as three tiers: **Always / Ask first / Never**.
 - Emphasis (IMPORTANT, YOU MUST) on the top 1–3 rules only.
