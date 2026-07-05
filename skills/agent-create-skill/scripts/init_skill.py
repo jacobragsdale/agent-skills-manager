@@ -49,10 +49,16 @@ description: {description}
 ## Improving this skill
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{{"ts": "<ISO-8601>", "skill": "{name}", "outcome": "ok" | "corrected"}}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.
 """
 
 LEARNINGS_TEMPLATE = """\

@@ -50,9 +50,11 @@ coordination" mechanism, and everything below rides on it.
 - Rules get the learnings loop: each `rules/*.md` gains a LEARNINGS
   sibling, same harvest/fold path. A rule repeatedly ignored is a learning
   about the rule's wording.
-- Trigger regression tests in CI: freeze each skill's six-message trigger
-  table as `tests/triggers.md`; an ADO pipeline judges name + first 250
-  chars of description on every PR.
+- Trigger regression tests in CI: freeze each skill's trigger table
+  (10+ messages, near-miss negatives) as `tests/triggers.md`; an ADO
+  pipeline judges name + description on every PR. Full form: ~20 queries,
+  3 runs each (nondeterminism), 0.5 pass threshold, train/validation split
+  — per agentskills.io's description-optimization methodology.
 - Golden-task evals: 1–3 canonical tasks per skill, run headless
   before/after any proposed SKILL.md fold; results go in the PR
   description. Folds become evidence-backed.

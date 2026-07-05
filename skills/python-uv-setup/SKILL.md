@@ -1,6 +1,6 @@
 ---
 name: python-uv-setup
-description: "Standardize or set up a Python repo on uv: single pyproject.toml, pre-commit (ruff + basedpyright), .env management, uv run entry points, README/AGENTS.md. Use when onboarding brownfield code to uv, fixing uv sync failures (undeclared build deps, SSL, proxy, private PyPI auth), or migrating off requirements.txt / setup.py / custom setup scripts."
+description: "Standardize or set up a Python repo on uv: single pyproject.toml, pre-commit (ruff + basedpyright), .env management, uv run entry points, README/AGENTS.md. Use when onboarding brownfield code to uv, starting a new Python project, fixing uv sync failures (undeclared build deps, SSL, proxy, private PyPI auth), or migrating off requirements.txt / setup.py / custom setup scripts — even if the user just says 'set up this Python repo'. Do NOT use for writing tests (use python-testing) or fixing type errors (use basedpyright-strict)."
 ---
 
 # Python environment setup with uv
@@ -181,7 +181,13 @@ Solved `uv sync` errors are domain knowledge, not process corrections — they
 go in `references/troubleshooting.md` (see step 2), not LEARNINGS.md.
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{"ts": "<ISO-8601>", "skill": "python-uv-setup", "outcome": "ok" | "corrected"}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.

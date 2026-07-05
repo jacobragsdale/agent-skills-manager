@@ -2,10 +2,10 @@
 
 **Your team's coding agents, learning from each other's mistakes — automatically.**
 
-Every developer using Cursor or Claude Code is quietly re-teaching their
-agent the same lessons: the flag that changed, the internal proxy dance, the
-deploy step everyone forgets. That knowledge evaporates at the end of each
-session, on each machine, for each person.
+Every developer using Cursor, Claude Code, Codex, or Copilot is quietly
+re-teaching their agent the same lessons: the flag that changed, the internal
+proxy dance, the deploy step everyone forgets. That knowledge evaporates at
+the end of each session, on each machine, for each person.
 
 This repo turns [Agent Skills](https://agentskills.io) into a **team
 memory with a feedback loop**: skills are distributed to every machine
@@ -100,6 +100,29 @@ everything into WSL if present, registers the nightly Scheduled Task, and
 runs `manage.py doctor`. Idempotent — re-run any time; delete the setup
 folder afterwards.
 
+## Which agents pick this up
+
+The managed clone at `~/.agents` puts skills at `~/.agents/skills/` — an
+official user-level discovery path for **Cursor, Codex, and Copilot**, so
+those three see every skill natively with zero configuration. **Claude
+Code** reads only `~/.claude/skills`; set `AGENT_SKILLS_CLAUDE=1` and the
+nightly sync maintains per-skill links there. (On machines running both
+Claude Code and Cursor, disable Cursor's *Include third-party Plugins,
+Skills, and other configs* setting — Cursor also scans `~/.claude/skills`
+and does not dedupe.)
+
+All four agents load skills the same way: name + description always in
+context (~100 tokens/skill), body only when a skill fires, references only
+when read. The learnings/usage loop rides each skill's footer, so it is in
+context exactly when a skill runs — no always-on configuration needed.
+
+The two files in `rules/` are the exception: they are always-on guidance
+(check skills before improvising; log unmet needs), and **no agent
+auto-loads rules from `~/.agents`**. Onboarding includes a one-time install
+per agent — Cursor: paste into Settings → Rules; Claude Code: import from
+`~/.claude/CLAUDE.md`; Codex: append to `~/.codex/AGENTS.md`; Copilot: repo
+`AGENTS.md`. Each rule file carries this note in a comment.
+
 ## Setting up for your team (maintainer, one-time)
 
 1. Push this repo to your Azure DevOps project.
@@ -143,9 +166,13 @@ backups, and spools (gitignored).
 ## The conventions that make it work
 
 Every skill follows the house process in `skills/agent-create-skill`
-(interview → scaffold → validate → trigger-test → learnings loop), and two
-always-on rules close the loop: `rules/skills-first.md` (check skills before
-improvising; read LEARNINGS before executing) and `rules/team-loop.md`
-(record corrections, usage, and unmet needs in the sanctioned paths).
-Nothing else about a machine is trusted or preserved — which is exactly why
-the system stays healthy with zero ongoing administration.
+(interview → scaffold → validate → trigger-test → learnings loop). Skills
+are model-invocable by default — descriptions are written as pushy triggers
+with explicit "Do NOT use" boundaries, tuned against the invocation
+mechanics documented in
+`skills/agent-create-skill/references/invocation.md`. The improvement loop
+(read LEARNINGS first; log usage and corrections after) rides each skill's
+footer, and two small always-on rules cover what footers can't: check
+skills before improvising, and log unmet needs. Nothing else about a
+machine is trusted or preserved — which is exactly why the system stays
+healthy with zero ongoing administration.

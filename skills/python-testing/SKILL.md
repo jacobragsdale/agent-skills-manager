@@ -1,6 +1,6 @@
 ---
 name: python-testing
-description: "Write, backfill, or review pytest suites: readable behavior-driven tests, minimal mocking, test data that can't silently drift. Use when writing unit tests for new code, adding tests to an untested repo, auditing a suite for over-mocked or tautological tests, or wiring pytest + coverage into pre-commit. Covers pydantic/polyfactory test data, pandera for DataFrames, and faking Oracle/MSSQL stored procedures with contract tests."
+description: "Write, backfill, or review pytest suites: readable behavior-driven tests, minimal mocking, test data that can't silently drift. Use when writing or improving Python tests — even if the user just says 'add tests' or 'is this tested?' — when adding tests to an untested repo, auditing a suite for over-mocked or tautological tests, or wiring pytest + coverage into pre-commit. Covers pydantic/polyfactory test data, pandera for DataFrames, and faking Oracle/MSSQL stored procedures with contract tests. Do NOT use for non-Python test frameworks or type-checking setup (use basedpyright-strict)."
 ---
 
 # Python testing
@@ -195,7 +195,13 @@ rows used elsewhere can't drift from what `dbo.GetOrders` really returns.
 ## Improving this skill
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{"ts": "<ISO-8601>", "skill": "python-testing", "outcome": "ok" | "corrected"}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.

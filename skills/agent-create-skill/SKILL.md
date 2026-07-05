@@ -1,16 +1,19 @@
 ---
 name: agent-create-skill
-description: Create, improve, or validate agent skills (SKILL.md folders). Use when the user wants to make a new skill, fix a skill that isn't triggering, review or refactor an existing skill, add scripts to a skill, or fold LEARNINGS.md notes into a skill.
+description: "Create, improve, or validate agent skills (SKILL.md folders). Use when the user wants to make a new skill, improve or refactor an existing one, fix a skill that isn't triggering or fires too often, tune a skill description, add scripts to a skill, or fold LEARNINGS.md notes into a skill — even if they just say 'teach the agent to do X' or 'make this workflow reusable'. Do NOT use for contributing a skill to the team repo via PR (use propose-skill) or for repo-level agent instructions (use agents-md)."
 metadata:
   author: jacob
 ---
 
 # Creating and improving agent skills
 
-Build skills that conform to the agentskills.io open standard and work unchanged
-in Cursor (`.agents/skills/`) and Claude Code (`.claude/skills/`). A skill is a
-folder whose name matches the `name:` in its `SKILL.md`, optionally with
-`scripts/`, `references/`, and `assets/` alongside.
+Build skills that conform to the agentskills.io open standard and work
+unchanged in Cursor, Codex, and Copilot (all read `~/.agents/skills/`) and
+Claude Code (via links into `~/.claude/skills/`). A skill is a folder whose
+name matches the `name:` in its `SKILL.md`, optionally with `scripts/`,
+`references/`, and `assets/` alongside. For how each agent discovers, routes,
+and loads skills — and what that means for descriptions and body size — read
+`references/invocation.md`.
 
 **Before doing anything else, read `LEARNINGS.md` in this skill's folder.**
 Entries there are corrections from real use and override anything below.
@@ -61,14 +64,21 @@ workflows the user must consciously trigger with `/skill-name`.
 
 House rules, and why:
 
-- **The description is a trigger, not a summary.** Routers may only show the
-  first ~250 characters, so front-load "Use when …" with the concrete phrases,
-  symptoms, and error messages from Step 1. Do not describe the workflow in
-  the description — agents that see a workflow summary follow it and never
-  read the body.
-- **Keep the body under 300 lines** (hard limit 500 — reported accuracy drops
-  beyond that). Reference material over ~100 lines moves to `references/`
-  with an explicit pointer: "Read `references/x.md` when Y."
+- **The description is a trigger, not a summary** — it carries the entire
+  routing burden; the body is invisible until the skill fires. Shape: third-
+  person capability sentence, then a pushy "Use when …" listing the concrete
+  phrases, symptoms, and file types from Step 1 (agents under-trigger by
+  default — include "even if the user doesn't mention <domain> explicitly"
+  cases), then a "Do NOT use when … (use <other-skill>)" boundary for every
+  near-neighbor in the library. Front-load: truncation eats the tail. Do not
+  describe the workflow — agents that see a workflow summary follow it and
+  never read the body.
+- **Keep the body under 150 lines** for model-invocable skills (~250 if
+  explicit-only; hard limit 500). Once invoked, the body persists in context
+  for the whole session, and trimming non-actionable content measurably
+  improves execution. Reference material moves to `references/` with an
+  explicit pointer: "Read `references/x.md` when Y" — never "see references/
+  for details".
 - **Only write what moves the agent off its defaults.** A capable agent
   already knows how to write Python and read docs. Every line should encode
   something it would otherwise get wrong. Delete the rest.
@@ -127,27 +137,43 @@ encode the house rules above.
 
 ## Step 5 — Trigger test
 
-Write six realistic user messages: three that should trigger the skill
-(varied phrasing, not just keyword swaps) and three near-misses that should
-not (share vocabulary but need something else). Judge each against **only the
-name and the first 250 characters of the description** — that is all a router
-sees. Show the user the table of message → expected → verdict. Revise the
-description until all six are correct. Do not fix a trigger miss by making
-the description vaguer; add the missing concrete phrase.
+Write at least ten realistic user messages: five or more that should trigger
+the skill and five or more near-misses that should not. Vary the positives
+across phrasing (formal/casual/typos), explicitness (names the domain vs
+only describes the need), and detail (terse vs file paths and backstory) —
+the most valuable positives are ones where the skill helps but the
+connection isn't obvious. Negatives must be near-misses that share
+vocabulary but need something else; "what's the weather" tests nothing.
+Judge each against **only the name and description** — that is all a router
+ever sees — and show the user the table of message → expected → verdict.
+Revise until all pass: broaden trigger coverage for false negatives, add a
+"Do NOT use when" boundary for false positives, and never fix a miss by
+making the description vaguer or by pasting a failed query verbatim —
+generalize to its category. Freeze the final table as
+`tests/triggers.md` in the skill folder for future regression runs.
 
 ## Step 6 — Wire the learnings loop
 
 Every skill you create ships with a `LEARNINGS.md` (the scaffolder seeds it)
-and ends with this exact block:
+and ends with this exact block (substituting the skill's name). It rides the
+skill body deliberately: it is in context exactly when the skill runs, which
+no always-on rules file achieves across agents (see
+`references/invocation.md`).
 
 ```markdown
 ## Improving this skill
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{"ts": "<ISO-8601>", "skill": "<skill-name>", "outcome": "ok" | "corrected"}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.
 ```
 
 ## Improving an existing skill
@@ -171,11 +197,20 @@ When asked to improve a skill (or to "fold learnings"):
   (token budgets, description writing, script-vs-prose, sources).
 - `references/frontmatter.md` — **read** before using any frontmatter field
   beyond `name`/`description`.
+- `references/invocation.md` — **read** when tuning triggering, deciding
+  body-vs-references placement, or targeting a specific agent (Cursor,
+  Claude Code, Codex, Copilot discovery mechanics and budgets).
 
 ## Improving this skill
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{"ts": "<ISO-8601>", "skill": "agent-create-skill", "outcome": "ok" | "corrected"}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.

@@ -30,17 +30,31 @@ Cursor discovers skills in `.agents/skills/`, `.cursor/skills/`, `~/.agents/skil
 
 | Field | Notes |
 |---|---|
-| `disable-model-invocation` | Same semantics as Cursor. |
-| `user-invocable` | `false` hides the skill from the `/` menu (model-only). |
-| `context` | `fork` runs the skill in a subagent and returns a summary — keeps verbose output out of the main context. |
+| `disable-model-invocation` | Same semantics as Cursor — description leaves context entirely. |
+| `user-invocable` | `false` hides the skill from the `/` menu only; does NOT block the Skill tool. |
+| `when_to_use` | Extra trigger text appended to the description in the listing (shares its 1,536-char cap). |
+| `paths` | Glob scoping, same idea as Cursor's. |
+| `context` | `fork` runs the skill in an isolated subagent and returns a summary — keeps verbose output out of the main context. Task-shaped skills only. |
 | `agent` | Which agent type executes a forked skill. |
 | `model` / `effort` | Model/effort override while the skill runs. |
-| `allowed-tools` | Tools pre-approved while the skill runs. |
-| `argument-hint` | Hint shown after `/skill-name` for expected arguments. |
+| `allowed-tools` / `disallowed-tools` | Tools pre-approved / removed while the skill runs. |
+| `argument-hint` / `arguments` | `/skill-name` argument UI and named `$var` substitution. |
 | `hooks` | Attach lifecycle hooks scoped to the skill. |
 
-Claude Code discovers skills in `.claude/skills/` and `~/.claude/skills/` only
-(no `.agents/` support — hence this repo's symlink installer).
+Claude Code discovers skills in `.claude/skills/` and `~/.claude/skills/`
+only — it does NOT read `.agents/` (manage.py bridges with per-skill links
+when `AGENT_SKILLS_CLAUDE=1`). Descriptions share a listing budget of ~1% of
+the context window; least-invoked skills lose their descriptions first.
+
+## Codex and Copilot
+
+Both implement the agentskills.io core spec and read `~/.agents/skills/`
+natively — `name` + `description` is all they need. Codex extras live in an
+optional `agents/openai.yaml` (e.g. `allow_implicit_invocation`), not in
+SKILL.md frontmatter. Copilot (VS Code) additionally honors
+`argument-hint`, `user-invocable`, `disable-model-invocation`, and
+experimental `context: fork`; GitHub-side Copilot honors `license` and
+`allowed-tools`. Neither supports `paths` scoping.
 
 ## Portability guidance
 

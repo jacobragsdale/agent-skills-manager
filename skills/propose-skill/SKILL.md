@@ -1,6 +1,6 @@
 ---
 name: propose-skill
-description: Propose a new team skill (or an improvement to one) as a reviewed pull request. Use when the user says "propose a skill", "add a team skill for X", "share this workflow with the team", "this should be a skill", or wants to contribute a skill without knowing the repo process.
+description: "Propose a new team skill (or an improvement to one) as a reviewed pull request to the team skills repo. Use when the user says 'propose a skill', 'add a team skill for X', 'share this workflow with the team', 'this should be a skill', or wants to contribute a skill without knowing the repo process. Do NOT use for building a personal or single-project skill (use agent-create-skill)."
 metadata:
   author: jacob
 ---
@@ -82,7 +82,13 @@ Give the user the PR link and tell them a maintainer will review it.
 ## Improving this skill
 
 Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use, if the user corrected you or the
-outcome surprised you, append one dated line to `LEARNINGS.md`:
-`- YYYY-MM-DD: <what happened> → <what to do instead>`. Do not edit SKILL.md
-directly; lessons are folded in deliberately, not on the fly.
+override the instructions above. After use:
+
+1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
+   `{"ts": "<ISO-8601>", "skill": "propose-skill", "outcome": "ok" | "corrected"}`
+   — `corrected` when the user had to fix or redirect your use of this skill.
+2. If the user corrected you or the outcome surprised you, also append one
+   dated line to `LEARNINGS.md`:
+   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
+   secrets. Do not edit SKILL.md directly — lessons are folded in
+   deliberately through a weekly reviewed PR.

@@ -25,7 +25,8 @@ KNOWN_FIELDS = {
     "model", "effort", "context", "agent", "hooks", "argument-hint", "user-invocable",
 }
 LOCAL_REF_RE = re.compile(r"\b((?:scripts|references|assets)/[A-Za-z0-9_.\-/]+)")
-BODY_WARN_LINES = 300
+BODY_WARN_LINES = 150            # model-invocable: body persists in context once fired
+BODY_WARN_LINES_EXPLICIT = 250   # explicit-only skills tolerate more
 BODY_MAX_LINES = 500
 DESCRIPTION_MAX = 1024
 ROUTER_VISIBLE_CHARS = 250
@@ -97,10 +98,14 @@ def validate(skill_dir: Path) -> tuple[list[str], list[str]]:
         )
 
     body_lines = body.count("\n") + 1 if body else 0
+    warn_lines = BODY_WARN_LINES_EXPLICIT if fm.get("disable-model-invocation") is True else BODY_WARN_LINES
     if body_lines > BODY_MAX_LINES:
         errors.append(f"body is {body_lines} lines (hard limit {BODY_MAX_LINES}; accuracy degrades)")
-    elif body_lines > BODY_WARN_LINES:
-        warnings.append(f"body is {body_lines} lines (house target < {BODY_WARN_LINES}) — move detail to references/")
+    elif body_lines > warn_lines:
+        warnings.append(
+            f"body is {body_lines} lines (house target < {warn_lines}) — the body persists in "
+            "context once invoked; move detail to references/"
+        )
 
     for ref in sorted(set(LOCAL_REF_RE.findall(body))):
         if "<" in ref or ">" in ref:
