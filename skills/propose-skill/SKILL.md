@@ -3,7 +3,6 @@ name: propose-skill
 description: Propose a new team skill (or an improvement to one) as a reviewed pull request. Use when the user says "propose a skill", "add a team skill for X", "share this workflow with the team", "this should be a skill", or wants to contribute a skill without knowing the repo process.
 metadata:
   author: jacob
-disable-model-invocation: true
 ---
 
 # Propose a team skill
@@ -14,7 +13,7 @@ inside `~/.agents` (the managed clone of the team repo).
 
 ## Step 1 — Qualify and interview
 
-Run the Step 1 interview from `skills/jacob-create-skill/SKILL.md`
+Run the Step 1 interview from `skills/agent-create-skill/SKILL.md`
 (read it first): the ten-word job, trigger phrases, the verified-struggle
 test, the script-vs-prose split. Two extra checks for team proposals:
 
@@ -37,14 +36,14 @@ Work on a branch so the nightly sync is never disturbed:
 ```bash
 cd ~/.agents
 git fetch origin && git checkout -B skill/<skill-name> origin/main
-uv run skills/jacob-create-skill/scripts/init_skill.py <skill-name> --dir skills
+uv run skills/agent-create-skill/scripts/init_skill.py <skill-name> --dir skills
 ```
 
-Draft the SKILL.md following jacob-create-skill Steps 3–6 (edit the
+Draft the SKILL.md following agent-create-skill Steps 3–6 (edit the
 scaffold in place; keep its frontmatter). Then validate — fix every error:
 
 ```bash
-uv run skills/jacob-create-skill/scripts/validate_skill.py skills/<skill-name>
+uv run skills/agent-create-skill/scripts/validate_skill.py skills/<skill-name>
 ```
 
 Run the Step 5 trigger test and show the user the table.

@@ -90,10 +90,10 @@ def validate(skill_dir: Path) -> tuple[list[str], list[str]]:
         if field not in KNOWN_FIELDS:
             warnings.append(f"unknown frontmatter field {field!r} — agents will ignore it silently")
 
-    if fm.get("disable-model-invocation") is not True:
+    if fm.get("disable-model-invocation") is True:
         warnings.append(
-            "disable-model-invocation is not true — house default is explicit-invoke only; "
-            "confirm the user actually asked for auto-triggering"
+            "disable-model-invocation is true — house default is model-invocable; "
+            "keep this only for consequential/destructive workflows the user must consciously trigger"
         )
 
     body_lines = body.count("\n") + 1 if body else 0

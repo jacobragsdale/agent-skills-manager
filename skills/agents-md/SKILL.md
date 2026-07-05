@@ -1,7 +1,6 @@
 ---
 name: agents-md
 description: "Write or overhaul a repo's AGENTS.md (or CLAUDE.md) so coding agents work well there. Use when creating agent instructions for a repo, auditing a bloated or ignored AGENTS.md/CLAUDE.md, when agents repeat the same mistakes in a codebase, or when wiring instruction files across Claude Code / Cursor / Codex."
-disable-model-invocation: true
 ---
 
 # Writing a repo's AGENTS.md

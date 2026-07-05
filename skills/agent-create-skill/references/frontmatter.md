@@ -21,7 +21,7 @@ these tables.
 | Field | Notes |
 |---|---|
 | `paths` | Glob patterns (comma-separated string or list). Skill is only surfaced when the agent reads/edits matching files. Skills in nested project dirs are auto-scoped to that dir without `paths`. |
-| `disable-model-invocation` | `true` → never auto-triggered; only explicit `/skill-name`. **House default for every skill in this repo** (set by `init_skill.py` unless `--auto-trigger` is passed) — not just for consequential workflows. |
+| `disable-model-invocation` | `true` → never auto-triggered; only explicit `/skill-name`. House default is model-invocable (flag omitted); `init_skill.py --explicit-only` adds it for consequential/destructive workflows. |
 
 Cursor discovers skills in `.agents/skills/`, `.cursor/skills/`, `~/.agents/skills/`,
 `~/.cursor/skills/`, and (compat) `.claude/skills/` + `~/.claude/skills/`.

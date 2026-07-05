@@ -32,7 +32,7 @@ coordination" mechanism, and everything below rides on it.
 ## 3. Contribution (built)
 
 - `/propose-skill`: teammate describes a pain point; the agent runs the
-  jacob-create-skill interview, scaffolds on a branch, validates, opens the
+  agent-create-skill interview, scaffolds on a branch, validates, opens the
   PR. Contribution without knowing git, ADO, or the house format.
 - Demand signal: agents log uncovered struggles to `.manager/requests.md`
   (per `rules/team-loop.md`); harvest ships them to `requests/inbox/`; the

@@ -15,5 +15,5 @@ lessons from real failures, kept current by a weekly review cycle.
   what happened per the team improvement loop rule — do not silently
   work around a broken skill and leave it broken for the next person.
 - To create or change a skill, use `/propose-skill` (or follow
-  `skills/jacob-create-skill`) so it goes through validation and review —
+  `skills/agent-create-skill`) so it goes through validation and review —
   never hand-edit `~/.agents/skills/` outside of `LEARNINGS.md`.

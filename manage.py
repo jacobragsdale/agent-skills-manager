@@ -425,7 +425,7 @@ def fold() -> None:
             + "\n".join(f"- `{skill}`: {n} new entrie(s)" for skill, n in sorted(folded.items()))
             + ("\n- some entries referenced missing skills; see `learnings/ORPHANED.md`" if orphans else "")
             + "\n\nReview, merge, then fold recurring lessons into SKILL.md deliberately "
-            "(see jacob-create-skill, 'Improving an existing skill')."
+            "(see agent-create-skill, 'Improving an existing skill')."
         )
         ensure_pull_request(FOLD_BRANCH, branch, f"learnings: fold inbox ({today})", description)
     finally:

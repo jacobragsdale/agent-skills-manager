@@ -1,7 +1,6 @@
 ---
 name: python-testing
 description: "Write, backfill, or review pytest suites: readable behavior-driven tests, minimal mocking, test data that can't silently drift. Use when writing unit tests for new code, adding tests to an untested repo, auditing a suite for over-mocked or tautological tests, or wiring pytest + coverage into pre-commit. Covers pydantic/polyfactory test data, pandera for DataFrames, and faking Oracle/MSSQL stored procedures with contract tests."
-disable-model-invocation: true
 ---
 
 # Python testing

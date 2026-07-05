@@ -12,7 +12,7 @@ Azure DevOps pull request.
 ## Context — read these first
 
 - `AGENTS.md` — house rules for this repo.
-- `skills/jacob-create-skill/SKILL.md` — especially "Improving an existing
+- `skills/agent-create-skill/SKILL.md` — especially "Improving an existing
   skill"; its process governs every SKILL.md edit you make.
 - Layout: `skills/<name>/` each with `SKILL.md` + `LEARNINGS.md`. Inbox files
   are `learnings/inbox/<timestamp>-<user>-<host>.md`: frontmatter with
@@ -40,7 +40,7 @@ Azure DevOps pull request.
    prior week and reported again now. Follow "Improving an existing skill":
    edit the SKILL.md in place in the section where the mistake happens,
    delete the folded `LEARNINGS.md` lines, and run
-   `uv run skills/jacob-create-skill/scripts/validate_skill.py skills/<name>`
+   `uv run skills/agent-create-skill/scripts/validate_skill.py skills/<name>`
    — do not commit a SKILL.md that fails validation. A single report from a
    single user is never enough; leave it in LEARNINGS.md to season.
 6. `git rm` the processed inbox files.

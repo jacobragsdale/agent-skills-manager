@@ -1,9 +1,8 @@
 ---
-name: jacob-create-skill
+name: agent-create-skill
 description: Create, improve, or validate agent skills (SKILL.md folders). Use when the user wants to make a new skill, fix a skill that isn't triggering, review or refactor an existing skill, add scripts to a skill, or fold LEARNINGS.md notes into a skill.
 metadata:
   author: jacob
-disable-model-invocation: true
 ---
 
 # Creating and improving agent skills
@@ -26,10 +25,10 @@ before scaffolding. Skip a question only if the request already answers it.
    propose the split.
 2. **Trigger phrases.** What would the user actually type when they want this?
    And what nearby requests should *not* trigger it? These become the
-   description and the trigger test in Step 5 — they still matter even
-   though skills default to explicit invocation (see Step 3): they're what
-   the agent sees in the `/` menu, and what Step 5 judges if the user later
-   asks to turn auto-triggering on.
+   description and the trigger test in Step 5. Skills are model-invoked by
+   default (see Step 3), so the description is the routing surface — getting
+   these phrases right is the difference between a skill that fires and one
+   that sits unused.
 3. **The verified-struggle test.** What has an agent actually gotten wrong
    doing this task without the skill? Skills encode lessons from verified
    success, not speculation — a skill written before anyone has struggled is
@@ -53,10 +52,10 @@ frontmatter, and the learnings loop start correct:
 uv run <this-skill-dir>/scripts/init_skill.py <skill-name> --dir <skills-root>
 ```
 
-This defaults every new skill to `disable-model-invocation: true` (Cursor and
-Claude Code both honor it): explicit `/skill-name` only, never auto-triggered
-from conversation. Pass `--auto-trigger` only when the user has explicitly
-asked for automatic triggering in Step 1 — it is an opt-in, not a default.
+New skills are model-invocable by default: the agent triggers them from
+conversation when the description matches. Pass `--explicit-only` (which sets
+`disable-model-invocation: true`) only for consequential or destructive
+workflows the user must consciously trigger with `/skill-name`.
 
 ## Step 3 — Draft the SKILL.md
 
@@ -83,10 +82,11 @@ House rules, and why:
   prohibition, not "prefer". Agent produces the wrong shape → exact template
   with REQUIRED fields, not a prohibition list. Agent forgets things → a
   checklist, not prose reminders.
-- **Default `disable-model-invocation: true`.** House default for every skill
-  in this repo, set by the scaffolder in Step 2. Only leave it off (auto-
-  trigger from conversation) when the user explicitly asked for that in
-  Step 1 — never assume it because a skill seems "obviously" auto-triggerable.
+- **Model-invocable by default.** Skills trigger from conversation when the
+  description matches — that is what makes a team library useful without
+  anyone memorizing skill names. Reserve `disable-model-invocation: true`
+  for consequential or destructive workflows (deploys, deletions, anything
+  that publishes) the user must consciously trigger.
 
 ### Scripts: uv + PEP 723, always
 

@@ -142,7 +142,7 @@ backups, and spools (gitignored).
 
 ## The conventions that make it work
 
-Every skill follows the house process in `skills/jacob-create-skill`
+Every skill follows the house process in `skills/agent-create-skill`
 (interview → scaffold → validate → trigger-test → learnings loop), and two
 always-on rules close the loop: `rules/skills-first.md` (check skills before
 improvising; read LEARNINGS before executing) and `rules/team-loop.md`

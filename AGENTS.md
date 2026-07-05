@@ -15,10 +15,10 @@ harvest — see `rules/team-loop.md`):
 Everything else changes through pull requests:
 
 - **Creating or changing a skill?** Use `/propose-skill`, which follows
-  `skills/jacob-create-skill/SKILL.md` — the house process (clarify →
+  `skills/agent-create-skill/SKILL.md` — the house process (clarify →
   scaffold → draft → validate → trigger test → learnings loop).
 - Every skill must pass
-  `uv run skills/jacob-create-skill/scripts/validate_skill.py skills/<name>`
+  `uv run skills/agent-create-skill/scripts/validate_skill.py skills/<name>`
   before commit. Treat warnings as decisions, not noise.
 - All bundled Python is a single file with a PEP 723 `# /// script` header,
   runnable via `uv run` with no environment setup.
