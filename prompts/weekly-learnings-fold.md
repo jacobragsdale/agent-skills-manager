@@ -1,11 +1,13 @@
-# Weekly learnings fold — headless agent prompt
+# Weekly fold & fleet ops — headless agent prompt
 
 You are running unattended at the root of a clone of the team agent-skills
 repo. Nobody will answer questions; work autonomously and prefer the smaller,
-safer action when uncertain. Your job: fold the week's harvested learnings
-from `learnings/inbox/` into each skill's `LEARNINGS.md`, fold *recurring*
-lessons into `SKILL.md` where the evidence supports it, and open or update
-the Azure DevOps pull request.
+safer action when uncertain. Your jobs, all landing in one branch and one
+pull request: fold the week's harvested learnings from `learnings/inbox/`
+into each skill's `LEARNINGS.md`, fold *recurring* lessons into `SKILL.md`
+where the evidence supports it, aggregate the week's metrics into the
+dashboard, triage skill requests, check fleet health, and open or update the
+Azure DevOps pull request.
 
 ## Context — read these first
 
@@ -23,8 +25,8 @@ the Azure DevOps pull request.
 ## Steps
 
 1. `git fetch origin`, then `git checkout -B learnings/fold origin/main`.
-   If `learnings/inbox/` contains no entry files (`.gitkeep` aside), stop —
-   there is nothing to do this week.
+   If `learnings/inbox/`, `metrics/inbox/`, and `requests/inbox/` are all
+   empty (`.gitkeep` aside), stop — there is nothing to do this week.
 2. Read every inbox file. Group entries by skill, keeping attribution.
 3. **Semantic dedupe.** Merge entries that teach the same lesson even when
    phrased differently, and drop entries already present in that skill's
@@ -42,14 +44,32 @@ the Azure DevOps pull request.
    — do not commit a SKILL.md that fails validation. A single report from a
    single user is never enough; leave it in LEARNINGS.md to season.
 6. `git rm` the processed inbox files.
-7. Commit in reviewable units: one commit
-   `learnings: fold inbox (YYYY-MM-DD)` for the LEARNINGS/inbox changes,
-   then one commit per SKILL.md fold —
-   `skills/<name>: fold recurring lesson into SKILL.md` — so the reviewer
-   can drop any single fold without losing the rest.
-8. Push: `git -c "http.extraheader=AUTHORIZATION: Basic <b64>" push origin
-   +learnings/fold` where `<b64>` is `printf ':%s' "$AGENT_SKILLS_PAT" | base64`.
-9. Pull request: derive org/project/repo from `git remote get-url origin`.
+7. **Metrics.** Append every line from `metrics/inbox/*.jsonl` to
+   `metrics/history.jsonl` (create if missing), `git rm` the inbox files,
+   then regenerate `metrics/DASHBOARD.md` from the full history: per skill —
+   invocations this week and per week over time, corrected-rate
+   (`outcome == "corrected"` share), learnings received this week; per team —
+   distinct contributors and skills-used-per-teammate-per-week. Flag skills
+   with high corrected-rate or many learnings (struggling) and skills with
+   zero invocations in 90 days (deprecation candidates). Plain markdown
+   tables; no speculation, only what the data shows.
+8. **Requests.** Merge entries from `requests/inbox/*.md` into
+   `requests/BACKLOG.md`: group duplicates of the same underlying need,
+   count distinct requesters per need (that is the ranking), keep
+   attribution. `git rm` the processed inbox files. Never delete a backlog
+   entry — mark it `(done: skills/<name>)` when a skill now covers it.
+9. **Fleet health.** Read `machines/*.json`; list any machine whose
+   `last_sync` is more than 3 days old in the PR description as a probable
+   broken install.
+10. Commit in reviewable units: one commit
+    `learnings: fold inbox (YYYY-MM-DD)` for the LEARNINGS/inbox changes,
+    one `metrics: weekly dashboard (YYYY-MM-DD)`, one
+    `requests: triage (YYYY-MM-DD)`, then one commit per SKILL.md fold —
+    `skills/<name>: fold recurring lesson into SKILL.md` — so the reviewer
+    can drop any single fold without losing the rest.
+11. Push: `git -c "http.extraheader=AUTHORIZATION: Basic <b64>" push origin
+    +learnings/fold` where `<b64>` is `printf ':%s' "$AGENT_SKILLS_PAT" | base64`.
+12. Pull request: derive org/project/repo from `git remote get-url origin`.
    If an active PR from `learnings/fold` already exists, the push updated it
    — done. Otherwise create one:
 
@@ -63,8 +83,15 @@ the Azure DevOps pull request.
 
    PR description must cover: new entries per skill, duplicates merged (and
    across whom), each SKILL.md fold with the evidence that justified it,
-   orphaned entries, and anything you skipped or found ambiguous.
-10. Leave the clone clean: check out the default branch and reset to origin.
+   the week's headline metrics, new/updated backlog needs with requester
+   counts, stale machines, orphaned entries, and anything you skipped or
+   found ambiguous.
+13. **Digest (optional).** If the `TEAMS_WEBHOOK_URL` env var is set, POST a
+    short summary card to it: the week's lesson count and top contributors,
+    any learning promoted into a SKILL.md (name the contributor — that is
+    the point), the top backlog need, and the PR link. Skip silently if the
+    var is unset; a webhook failure must not fail the run.
+14. Leave the clone clean: check out the default branch and reset to origin.
 
 ## Guardrails
 
