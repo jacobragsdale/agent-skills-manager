@@ -19,13 +19,21 @@ Commands (run from the repo root, i.e. `uv run manage.py <cmd>`):
             (exact-ish dedupe, attribution), delete the inbox files, push the
             `learnings/fold` branch, and open/update an Azure DevOps PR.
             Only the designated fold machine (AGENT_SKILLS_FOLD=1) runs this.
+  sweep-proposals
+            Open PRs for pushed skill/* proposal branches that don't have
+            one yet (requires AGENT_SKILLS_PAT; maintainer machine).
   nightly   harvest, then (on Windows, if WSL has a clone) run harvest inside
-            WSL, then fold if AGENT_SKILLS_FOLD=1. This is what the Windows
+            WSL, then fold if AGENT_SKILLS_FOLD=1, then sweep proposal
+            branches into PRs if a PAT is present. This is what the Windows
             Scheduled Task invokes.
 
-Auth: requires the AGENT_SKILLS_PAT env var (Azure DevOps PAT, Code
-read & write). The PAT is sent as a per-invocation Basic auth header and is
-never written to git config or disk.
+Auth: member machines need NO credentials here — git talks to Azure DevOps
+through Git Credential Manager (one interactive corporate sign-in at
+bootstrap, silent refresh after). Only the maintainer machine sets
+AGENT_SKILLS_PAT (Azure DevOps PAT, Code read & write) — it is required for
+the REST calls that fold and sweep-proposals make, is sent per-invocation as
+a Basic auth header, and is never written to git config or disk. On an auth
+failure, member machines get a Windows toast pointing at fix-signin.cmd.
 """
 
 from __future__ import annotations
@@ -55,7 +63,8 @@ FOLD_ENV = "AGENT_SKILLS_FOLD"
 # other configs" setting to avoid double context injection.
 CLAUDE_ENV = "AGENT_SKILLS_CLAUDE"
 # Extend this list as the installer grows more required configuration.
-REQUIRED_ENV = [PAT_ENV]
+# Empty by design: member machines authenticate via Git Credential Manager.
+REQUIRED_ENV: list[str] = []
 
 REPO_ROOT = Path(__file__).resolve().parent
 INBOX = REPO_ROOT / "learnings" / "inbox"
@@ -65,7 +74,7 @@ REQUESTS_INBOX = REPO_ROOT / "requests" / "inbox"
 MACHINES = REPO_ROOT / "machines"
 MANAGER_DIR = REPO_ROOT / ".manager"  # gitignored: logs, backups, local spools
 LOG_FILE = MANAGER_DIR / "manage.log"
-# Local spools agents append to between harvests (see rules/team-loop.md):
+# Local spools agents append to between harvests (see each skill's footer):
 USAGE_SPOOL = MANAGER_DIR / "usage.jsonl"      # one JSON object per line
 REQUESTS_SPOOL = MANAGER_DIR / "requests.md"   # "- YYYY-MM-DD: <need>" lines
 FOLD_BRANCH = "learnings/fold"
@@ -91,12 +100,31 @@ def die(msg: str) -> NoReturn:
 
 
 def run(args: list[str], check: bool = True, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # never hang unattended waiting for a password
     proc = subprocess.run(
-        args, cwd=cwd or REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        args, cwd=cwd or REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
     )
     if check and proc.returncode != 0:
         die(f"command failed ({proc.returncode}): {' '.join(args)}\n{proc.stdout}\n{proc.stderr}")
     return proc
+
+
+def notify_user(msg: str) -> None:
+    """Best-effort Windows toast so a member notices a broken sync without reading logs."""
+    log(f"NOTIFY: {msg}")
+    if os.name != "nt":
+        return
+    safe = msg.replace("'", "''")
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null;"
+        "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+        "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+        "$t.GetElementsByTagName('text').Item(0).InnerText='Agent Skills';"
+        f"$t.GetElementsByTagName('text').Item(1).InnerText='{safe}';"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Agent Skills').Show("
+        "[Windows.UI.Notifications.ToastNotification]::new($t))"
+    )
+    run(["powershell", "-NoProfile", "-Command", script], check=False)
 
 
 def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -109,8 +137,26 @@ def auth_header() -> str:
 
 
 def git_net(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """git command that talks to the remote — carries the PAT as a header."""
+    """git command that talks to the remote.
+
+    With no PAT set (member machines), plain git — Git Credential Manager
+    supplies cached corporate credentials. With AGENT_SKILLS_PAT set
+    (maintainer machine), the PAT rides as a per-invocation header.
+    """
+    if not os.environ.get(PAT_ENV):
+        return run(["git", *args], check=check)
     return run(["git", "-c", f"http.extraheader={auth_header()}", *args], check=check)
+
+
+AUTH_ERROR_MARKERS = (
+    "authentication failed", "could not read username", "logon failed",
+    "access denied", "http 401", "http 403", "tf401019", "terminal prompts disabled",
+)
+
+
+def is_auth_failure(proc: subprocess.CompletedProcess) -> bool:
+    text = f"{proc.stdout}\n{proc.stderr}".lower()
+    return any(m in text for m in AUTH_ERROR_MARKERS)
 
 
 def default_branch() -> str:
@@ -132,7 +178,12 @@ def ensure_ready() -> str:
         die(f"missing required env vars: {', '.join(missing)}")
     if not (REPO_ROOT / ".git").exists():
         die(f"{REPO_ROOT} is not a git repository")
-    git_net("fetch", "origin", "--prune")
+    proc = git_net("fetch", "origin", "--prune", check=False)
+    if proc.returncode != 0:
+        if is_auth_failure(proc):
+            notify_user("Azure DevOps sign-in expired — run fix-signin.cmd in your .agents folder.")
+            die("authentication to origin failed; interactive sign-in required (run fix-signin.cmd)")
+        die(f"git fetch failed: {(proc.stderr or proc.stdout).strip()[:300]}")
     return default_branch()
 
 
@@ -368,7 +419,7 @@ def ensure_pull_request(branch: str, target: str, title: str, description: str) 
     )
     if existing.get("count", 0) > 0:
         pr = existing["value"][0]
-        log(f"fold: updated existing PR !{pr['pullRequestId']}: {pr.get('title', '')}")
+        log(f"pr: active PR !{pr['pullRequestId']} already exists for {branch}: {pr.get('title', '')}")
         return
     pr = ado_api("POST", f"{api}?api-version=7.1", {
         "sourceRefName": f"refs/heads/{branch}",
@@ -376,10 +427,12 @@ def ensure_pull_request(branch: str, target: str, title: str, description: str) 
         "title": title,
         "description": description,
     })
-    log(f"fold: opened PR !{pr['pullRequestId']}: {title}")
+    log(f"pr: opened PR !{pr['pullRequestId']}: {title}")
 
 
 def fold() -> None:
+    if not os.environ.get(PAT_ENV):
+        die(f"fold requires {PAT_ENV} (maintainer machine only) for the pull-request API")
     branch = ensure_ready()
     base = f"origin/{branch}"
     dirty = [l for l in git("status", "--porcelain").stdout.splitlines() if not l.startswith("??")]
@@ -437,6 +490,34 @@ def fold() -> None:
     finally:
         git("checkout", branch, check=False)
         git("reset", "--hard", base, check=False)
+
+
+# ---------------------------------------------------------------- proposals
+
+def sweep_proposals() -> None:
+    """Open PRs for pushed skill/* proposal branches (maintainer machine only).
+
+    Members contribute with nothing but a git push (see propose-skill); this
+    turns each proposal branch without an active PR into one, using the
+    branch tip's commit message as the PR description.
+    """
+    if not os.environ.get(PAT_ENV):
+        die(f"sweep-proposals requires {PAT_ENV} (maintainer machine only)")
+    branch = ensure_ready()
+    if parse_remote() is None:
+        log("sweep: origin is not Azure DevOps; skipping proposal PRs")
+        return
+    refs = git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/skill/").stdout.split()
+    if not refs:
+        log("sweep: no proposal branches")
+        return
+    for ref in refs:
+        head = ref.removeprefix("refs/remotes/origin/")  # e.g. skill/deploy-checklist
+        message = git("log", "-1", "--format=%B", ref).stdout.strip()
+        title = message.splitlines()[0] if message else f"skills: propose {head.removeprefix('skill/')}"
+        description = (message + "\n\n---\nOpened automatically by the nightly proposal sweep."
+                       if message else "Opened automatically by the nightly proposal sweep.")
+        ensure_pull_request(head, branch, title, description)
 
 
 # ---------------------------------------------------------------- nightly
@@ -506,11 +587,14 @@ def nightly() -> None:
     harvest()
     sync_claude_links()
     wsl_leg()
+    if running_in_wsl():
+        if os.environ.get(FOLD_ENV) or os.environ.get(PAT_ENV):
+            log("nightly: fold/sweep run on the Windows side only; skipping inside WSL")
+        return
     if os.environ.get(FOLD_ENV):
-        if running_in_wsl():
-            log("nightly: fold flag set but running inside WSL; fold runs on the Windows side only")
-        else:
-            fold()
+        fold()
+    if os.environ.get(PAT_ENV):
+        sweep_proposals()
 
 
 # ---------------------------------------------------------------- doctor
@@ -527,6 +611,9 @@ def doctor() -> None:
     print("agent-skills doctor")
     for name in REQUIRED_ENV:
         report(bool(os.environ.get(name)), f"env {name}", "" if os.environ.get(name) else "not set")
+    report(True, f"env {PAT_ENV}",
+           "set — maintainer machine (fold + proposal-PR sweep enabled)"
+           if os.environ.get(PAT_ENV) else "not set (normal: git auth via Git Credential Manager)")
     report(bool(os.environ.get(FOLD_ENV)) or True, f"env {FOLD_ENV}",
            "set — this is the fold machine" if os.environ.get(FOLD_ENV) else "not set (normal member machine)")
     report(True, f"env {CLAUDE_ENV}",
@@ -540,10 +627,10 @@ def doctor() -> None:
         remote = parse_remote()
         url = git("remote", "get-url", "origin", check=False).stdout.strip()
         report(remote is not None, "origin is Azure DevOps", url)
-        fetch = git_net("fetch", "origin", check=False) if os.environ.get(PAT_ENV) else None
-        if fetch is not None:
-            report(fetch.returncode == 0, "PAT can fetch from origin",
-                   "" if fetch.returncode == 0 else fetch.stderr.strip()[:200])
+        fetch = git_net("fetch", "origin", check=False)
+        auth_hint = "sign-in needed — run fix-signin.cmd" if is_auth_failure(fetch) else ""
+        report(fetch.returncode == 0, "can fetch from origin",
+               "" if fetch.returncode == 0 else (auth_hint or fetch.stderr.strip()[:200]))
     report(INBOX.is_dir() or not (REPO_ROOT / "learnings").exists(), "learnings/inbox exists",
            "" if INBOX.is_dir() else "create learnings/inbox/.gitkeep in the repo")
     if os.name == "nt":
@@ -558,9 +645,10 @@ def doctor() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["doctor", "harvest", "fold", "nightly"])
+    parser.add_argument("command", choices=["doctor", "harvest", "fold", "sweep-proposals", "nightly"])
     args = parser.parse_args()
-    {"doctor": doctor, "harvest": harvest, "fold": fold, "nightly": nightly}[args.command]()
+    {"doctor": doctor, "harvest": harvest, "fold": fold,
+     "sweep-proposals": sweep_proposals, "nightly": nightly}[args.command]()
 
 
 if __name__ == "__main__":

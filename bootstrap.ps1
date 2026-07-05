@@ -4,39 +4,41 @@
 # the script), then run from any PowerShell 5.1+ prompt (no admin required):
 #
 #   git clone <repo-url> skills-setup && cd skills-setup
-#   $env:AGENT_SKILLS_PAT = '<your Azure DevOps PAT, Code read & write>'
 #   powershell -ExecutionPolicy Bypass -File bootstrap.ps1
 #
-# The repo URL is taken from this clone's own `origin` remote (override with
-# -RepoUrl). Bootstrap then creates the managed clone at %USERPROFILE%\.agents;
-# the folder you ran from can be deleted afterwards.
+# No tokens, no configuration: when git first talks to Azure DevOps, a
+# Microsoft sign-in window opens — use your corporate account. Git Credential
+# Manager (bundled with Git for Windows) caches and silently refreshes the
+# credential afterwards, including for the nightly scheduled task.
 #
 # What it does:
-#   1. Fails early if required env vars are missing (AGENT_SKILLS_PAT).
-#   2. Installs prerequisites: git and uv (winget, with fallbacks).
-#   3. Persists the PAT as a user env var and exposes it to WSL via WSLENV.
-#   4. Clones the skills repo as %USERPROFILE%\.agents (the repo IS .agents).
-#   5. If WSL is installed: installs uv and clones ~/.agents inside WSL too.
-#   6. Registers a daily Scheduled Task that runs `uv run manage.py nightly`
+#   1. Installs prerequisites: git (with Git Credential Manager) and uv.
+#   2. Clones the skills repo as %USERPROFILE%\.agents (the repo IS .agents)
+#      and verifies the cached sign-in works.
+#   3. If WSL is installed: installs uv, points WSL git at the Windows
+#      credential manager, and clones ~/.agents inside WSL too.
+#   4. Registers a daily Scheduled Task running `uv run manage.py nightly`
 #      (pull updates, harvest learnings, drive the WSL leg — see manage.py).
-#   7. Runs `manage.py doctor` to verify the install.
+#   5. Runs an initial sync (your machine shows up for the team immediately)
+#      and a doctor check.
 #
-# Re-running is safe: every step is idempotent.
+# If sign-in ever expires later, double-click fix-signin.cmd in %USERPROFILE%\.agents.
+# Re-running this script is safe: every step is idempotent.
 
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
     # Defaults to the origin remote of the clone this script is running from.
     [string]$RepoUrl = '',
-    # Pass on exactly ONE machine to run the nightly MECHANICAL fold + PR
-    # (manage.py fold). Skip it everywhere if a weekly agent-driven fold job
-    # (prompts/weekly-learnings-fold.md) owns folding instead.
+    # MAINTAINER ONLY: enables the nightly mechanical fold + proposal-PR sweep.
+    # Requires $env:AGENT_SKILLS_PAT (Azure DevOps PAT, Code read & write) to
+    # be set in this session; it is persisted for the scheduled task.
     [switch]$FoldMachine,
     [string]$TaskTime = '02:00'
 )
 
 $ErrorActionPreference = 'Stop'
-$RequiredEnv = @('AGENT_SKILLS_PAT')   # extend as more required config appears
+$RequiredEnv = @()   # member machines need no env vars; extend if that changes
 $Dest = Join-Path $HOME '.agents'
 $TaskName = 'AgentSkillsNightly'
 
@@ -45,11 +47,6 @@ function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan 
 function Update-SessionPath {
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
                 [Environment]::GetEnvironmentVariable('Path', 'User')
-}
-
-function Get-AuthHeader {
-    $b64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$($env:AGENT_SKILLS_PAT)"))
-    return "AUTHORIZATION: Basic $b64"
 }
 
 # --- 0. Resolve the repo URL from this clone ---------------------------------
@@ -64,13 +61,11 @@ if (-not $RepoUrl) {
 }
 Write-Host "Repo: $RepoUrl"
 
-# --- 1. Fail early on missing env vars --------------------------------------
-Write-Step 'Checking required environment variables'
+# --- 1. Fail early on missing configuration ----------------------------------
 $missing = $RequiredEnv | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
-if ($missing) {
-    throw "Missing required env var(s): $($missing -join ', '). " +
-          "Set them in this session first, e.g.  `$env:AGENT_SKILLS_PAT = '<pat>'  " +
-          '(Azure DevOps PAT with Code read & write scope).'
+if ($missing) { throw "Missing required env var(s): $($missing -join ', ')." }
+if ($FoldMachine -and -not $env:AGENT_SKILLS_PAT) {
+    throw '-FoldMachine requires $env:AGENT_SKILLS_PAT (Azure DevOps PAT, Code read & write) in this session.'
 }
 
 # --- 2. Prerequisites: git + uv ----------------------------------------------
@@ -100,25 +95,15 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     }
 }
 
-# --- 3. Persist env vars (scheduled task + WSL need them) --------------------
-Write-Step 'Persisting environment variables for the scheduled task and WSL'
-foreach ($name in $RequiredEnv) {
-    [Environment]::SetEnvironmentVariable($name, [Environment]::GetEnvironmentVariable($name), 'User')
-}
-$wslenv = [Environment]::GetEnvironmentVariable('WSLENV', 'User')
-$wslFlags = ($RequiredEnv | ForEach-Object { "$_/u" })
-foreach ($flag in $wslFlags) {
-    if (-not ($wslenv -split ':' -contains $flag)) { $wslenv = (@($wslenv, $flag) -ne '') -join ':' }
-}
-[Environment]::SetEnvironmentVariable('WSLENV', $wslenv, 'User')
-$env:WSLENV = $wslenv
+# --- 3. Maintainer configuration (fold machine only) --------------------------
 if ($FoldMachine) {
+    Write-Step 'Configuring this machine as the maintainer (fold + proposal sweep)'
+    [Environment]::SetEnvironmentVariable('AGENT_SKILLS_PAT', $env:AGENT_SKILLS_PAT, 'User')
     [Environment]::SetEnvironmentVariable('AGENT_SKILLS_FOLD', '1', 'User')
     $env:AGENT_SKILLS_FOLD = '1'
-    Write-Host '    This machine is designated as the learnings fold machine.'
 }
 
-# --- 4. Clone the repo as ~/.agents ------------------------------------------
+# --- 4. Clone the repo as ~/.agents -------------------------------------------
 Write-Step "Cloning skills repo into $Dest"
 if (Test-Path (Join-Path $Dest '.git')) {
     $existing = git -C $Dest remote get-url origin
@@ -129,8 +114,17 @@ if (Test-Path (Join-Path $Dest '.git')) {
 } elseif (Test-Path $Dest) {
     throw "$Dest exists but is not a clone of the skills repo. Move it aside, then re-run."
 } else {
-    git -c "http.extraheader=$(Get-AuthHeader)" clone $RepoUrl $Dest
+    Write-Host '    If a Microsoft sign-in window opens, use your corporate account.' -ForegroundColor Yellow
+    git clone $RepoUrl $Dest
 }
+
+Write-Step 'Verifying the cached Azure DevOps sign-in'
+git -C $Dest fetch origin
+if ($LASTEXITCODE -ne 0) {
+    throw "git could not authenticate to $RepoUrl. Run 'git -C $Dest fetch origin' " +
+          'to retry the sign-in window, then re-run this script.'
+}
+Write-Host '    Sign-in cached — the nightly task will reuse it silently.'
 
 # --- 5. WSL: same setup inside, driven from Windows --------------------------
 Write-Step 'Checking for WSL'
@@ -141,6 +135,10 @@ if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
 }
 if ($wslDistros) {
     Write-Step "WSL detected ($($wslDistros[0].Trim())); installing uv and cloning ~/.agents inside it"
+    $gcm = Get-ChildItem 'C:\Program Files\Git' -Recurse -Filter 'git-credential-manager.exe' -ErrorAction SilentlyContinue |
+           Select-Object -First 1 -ExpandProperty FullName
+    if (-not $gcm) { $gcm = 'C:\Program Files\Git\mingw64\bin\git-credential-manager.exe' }
+    $gcmWsl = '/mnt/' + $gcm.Substring(0,1).ToLower() + ($gcm.Substring(2) -replace '\\', '/') -replace ' ', '\ '
     $bash = @'
 set -e
 for tool in git curl; do
@@ -148,13 +146,13 @@ for tool in git curl; do
 done
 export PATH="$HOME/.local/bin:$PATH"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-B64=$(printf ':%s' "$AGENT_SKILLS_PAT" | base64 | tr -d '\n')
+git config --global credential.helper '__GCM__'
 if [ -d "$HOME/.agents/.git" ]; then
   echo "~/.agents already cloned in WSL"
 else
-  git -c "http.extraheader=AUTHORIZATION: Basic $B64" clone '__REPO_URL__' "$HOME/.agents"
+  git clone '__REPO_URL__' "$HOME/.agents"
 fi
-'@ -replace '__REPO_URL__', $RepoUrl
+'@ -replace '__REPO_URL__', $RepoUrl -replace '__GCM__', $gcmWsl
     & wsl.exe -e bash -lc $bash
     if ($LASTEXITCODE -ne 0) {
         Write-Warning 'WSL setup failed (see message above). Windows setup continues; fix WSL and re-run.'
@@ -175,10 +173,11 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $TaskTime
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 
-# --- 7. Verify ----------------------------------------------------------------
-Write-Step 'Running doctor'
+# --- 7. First sync + verify ----------------------------------------------------
+Write-Step 'Running the first sync (your machine will appear on the team dashboard)'
 Push-Location $Dest
 try {
+    & $uvPath run manage.py nightly
     & $uvPath run manage.py doctor
     if ($LASTEXITCODE -ne 0) { Write-Warning 'doctor reported problems — see above.' }
 } finally {
@@ -186,5 +185,7 @@ try {
 }
 
 Write-Host ''
-Write-Host 'Done. Skills live in ~/.agents (and ~/.agents inside WSL if present).' -ForegroundColor Green
-Write-Host "Nightly sync runs at $TaskTime via Task Scheduler ('$TaskName'); log: $logPath"
+Write-Host 'Done. Your coding agent now has the team skill library.' -ForegroundColor Green
+Write-Host "Skills live in ~/.agents and update themselves nightly at $TaskTime (log: $logPath)."
+Write-Host 'Try it: open Cursor and ask "set up this Python repo to our standards".'
+Write-Host 'If sync ever breaks, double-click fix-signin.cmd in your .agents folder.'

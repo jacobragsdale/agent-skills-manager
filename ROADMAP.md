@@ -17,7 +17,7 @@ coordination" mechanism, and everything below rides on it.
 ## 2. Metrics + fleet health (built)
 
 - Usage telemetry rides the harvest pipe: agents append to
-  `.manager/usage.jsonl` (per `rules/team-loop.md`); harvest ships valid
+  `.manager/usage.jsonl` (per each skill's footer); harvest ships valid
   lines to `metrics/inbox/`. No telemetry infrastructure, no server.
 - Heartbeats: every harvest updates `machines/<host>.json`. A machine
   silent 3+ days is a broken install nobody noticed — the weekly job flags
@@ -35,7 +35,7 @@ coordination" mechanism, and everything below rides on it.
   agent-create-skill interview, scaffolds on a branch, validates, opens the
   PR. Contribution without knowing git, ADO, or the house format.
 - Demand signal: agents log uncovered struggles to `.manager/requests.md`
-  (per `rules/team-loop.md`); harvest ships them to `requests/inbox/`; the
+  (per each skill's footer); harvest ships them to `requests/inbox/`; the
   weekly job triages into `requests/BACKLOG.md` — a ranked backlog of
   skills people actually need, written by the agents that watched them
   struggle.
@@ -47,7 +47,7 @@ coordination" mechanism, and everything below rides on it.
 
 ## 4. Self-improving skills and rules (next)
 
-- Rules get the learnings loop: each `rules/*.md` gains a LEARNINGS
+- Always-on rules (if reintroduced) get the learnings loop: a LEARNINGS
   sibling, same harvest/fold path. A rule repeatedly ignored is a learning
   about the rule's wording.
 - Trigger regression tests in CI: freeze each skill's trigger table

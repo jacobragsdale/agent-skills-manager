@@ -6,7 +6,7 @@ machines it is cloned directly as `~/.agents` and managed by a nightly sync
 **local edits outside the sanctioned paths are lost by design**.
 
 Sanctioned local writes (collected upstream automatically by the nightly
-harvest — see `rules/team-loop.md`):
+harvest — the instructions ride each skill's footer):
 
 - `skills/<name>/LEARNINGS.md` — dated corrections after using a skill
 - `.manager/usage.jsonl` — one JSON line per skill use

@@ -80,9 +80,12 @@ scaffolds, validates, and opens the PR.
   learnings; skills change through the weekly fold PR, with evidence in the
   description and one commit per fold so a reviewer can drop any single
   change.
-- **Auth is one env var.** `AGENT_SKILLS_PAT` (Azure DevOps PAT, Code
-  read & write) is sent as a per-invocation Basic auth header — never
-  written to git config, remote URLs, or disk.
+- **Auth is your corporate sign-in, not tokens.** Members never touch a
+  PAT: Git Credential Manager (bundled with Git for Windows) pops one
+  Microsoft sign-in window at install and silently refreshes afterwards,
+  including for the scheduled task. If it ever expires, a Windows toast
+  points at `fix-signin.cmd` — one double-click repairs it. The only PAT in
+  the fleet lives on the maintainer machine, for the pull-request API.
 
 ## Quick start (teammate, Windows)
 
@@ -90,15 +93,16 @@ Clone the repo **anywhere** — the clone is just how you obtain the script:
 
 ```powershell
 git clone <repo-url> skills-setup; cd skills-setup
-$env:AGENT_SKILLS_PAT = '<your ADO PAT: Code read & write>'
 powershell -ExecutionPolicy Bypass -File bootstrap.ps1
 ```
 
-Bootstrap fails early on missing env vars, installs git + uv (winget with
-fallbacks), creates the managed clone at `%USERPROFILE%\.agents`, mirrors
-everything into WSL if present, registers the nightly Scheduled Task, and
-runs `manage.py doctor`. Idempotent — re-run any time; delete the setup
-folder afterwards.
+That's the whole install: no tokens, no settings. When git first talks to
+Azure DevOps, the familiar Microsoft sign-in window opens once. Bootstrap
+installs git + uv (winget with fallbacks), creates the managed clone at
+`%USERPROFILE%\.agents`, mirrors everything into WSL if present, registers
+the nightly Scheduled Task, and runs a first sync — your machine appears on
+the team dashboard immediately. Idempotent — re-run any time; delete the
+setup folder afterwards.
 
 ## Which agents pick this up
 
@@ -116,29 +120,29 @@ context (~100 tokens/skill), body only when a skill fires, references only
 when read. The learnings/usage loop rides each skill's footer, so it is in
 context exactly when a skill runs — no always-on configuration needed.
 
-The two files in `rules/` are the exception: they are always-on guidance
-(check skills before improvising; log unmet needs), and **no agent
-auto-loads rules from `~/.agents`**. Onboarding includes a one-time install
-per agent — Cursor: paste into Settings → Rules; Claude Code: import from
-`~/.claude/CLAUDE.md`; Codex: append to `~/.codex/AGENTS.md`; Copilot: repo
-`AGENTS.md`. Each rule file carries this note in a comment.
+There is deliberately no always-on rules layer: no agent auto-loads rules
+from `~/.agents`, so anything that mattered there rides skill footers and
+descriptions instead — zero manual configuration per teammate.
 
 ## Setting up for your team (maintainer, one-time)
 
 1. Push this repo to your Azure DevOps project.
 2. Distribute the quick-start above with your repo URL.
-3. On the machine that will run the weekly fold, schedule your headless
-   agent CLI against the committed prompt, e.g. weekly via Task Scheduler:
+3. On YOUR machine only, create an ADO PAT (Code read & write) and run
+   `bootstrap.ps1 -FoldMachine` with `$env:AGENT_SKILLS_PAT` set — this is
+   the one machine that talks to the PR API. Its nightly job then runs the
+   mechanical fold and opens PRs for teammates' pushed `skill/*` proposal
+   branches (`manage.py sweep-proposals`).
+4. For the judgment-enhanced weekly fold, schedule your headless agent CLI
+   against the committed prompt:
 
    ```powershell
    cd $HOME\.agents; agent -p (Get-Content prompts\weekly-learnings-fold.md -Raw)
    ```
 
-   (Or set `AGENT_SKILLS_FOLD=1` / `bootstrap.ps1 -FoldMachine` on exactly
-   one machine for the mechanical, no-LLM fallback: `manage.py fold`.)
-4. Optional: set `TEAMS_WEBHOOK_URL` on the fold machine for a weekly
+5. Optional: set `TEAMS_WEBHOOK_URL` on the fold machine for a weekly
    digest that credits contributors whose lessons got promoted.
-5. Recommended: branch policy requiring review on `learnings/fold` PRs.
+6. Recommended: branch policy requiring review on `learnings/fold` PRs.
 
 Hosting elsewhere? Harvest works with any git remote; only the PR-creation
 and auth-header helpers are Azure DevOps-specific (one small function each
@@ -148,14 +152,14 @@ to swap for GitHub/GitLab).
 
 ```
 skills/<name>/          one folder per skill: SKILL.md + LEARNINGS.md (+ scripts/, references/)
-rules/                  always-on agent rules (the loop instructions live here)
 prompts/                versioned prompts for scheduled agent jobs
 learnings/inbox/        harvested corrections awaiting the weekly fold
 metrics/inbox/ + DASHBOARD.md    usage telemetry and the weekly dashboard
 requests/inbox/ + BACKLOG.md     demand-ranked backlog of skills to build
 machines/               per-machine heartbeats (fleet health)
-manage.py               nightly sync/harvest/fold engine (self-updating)
+manage.py               nightly sync/harvest/fold/sweep engine (self-updating)
 bootstrap.ps1           one-time Windows machine setup
+fix-signin.cmd          one-click repair when the cached sign-in expires
 AGENTS.md               rules for agents working inside this repo
 ROADMAP.md              where this goes: trigger CI, drift detection, multi-team scale
 ```
@@ -170,9 +174,9 @@ Every skill follows the house process in `skills/agent-create-skill`
 are model-invocable by default — descriptions are written as pushy triggers
 with explicit "Do NOT use" boundaries, tuned against the invocation
 mechanics documented in
-`skills/agent-create-skill/references/invocation.md`. The improvement loop
-(read LEARNINGS first; log usage and corrections after) rides each skill's
-footer, and two small always-on rules cover what footers can't: check
-skills before improvising, and log unmet needs. Nothing else about a
-machine is trusted or preserved — which is exactly why the system stays
-healthy with zero ongoing administration.
+`skills/agent-create-skill/references/invocation.md`, and the library is
+kept deliberately small (every description enters every session's context).
+The improvement loop (read LEARNINGS first; log usage and corrections
+after) rides each skill's footer. Nothing else about a machine is trusted
+or preserved — which is exactly why the system stays healthy with zero
+ongoing administration.
