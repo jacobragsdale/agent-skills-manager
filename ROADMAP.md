@@ -57,7 +57,16 @@ coordination" mechanism, and everything below rides on it.
   — per agentskills.io's description-optimization methodology.
 - Golden-task evals: 1–3 canonical tasks per skill, run headless
   before/after any proposed SKILL.md fold; results go in the PR
-  description. Folds become evidence-backed.
+  description. Folds become evidence-backed. Adopt Anthropic's harness
+  formats rather than inventing our own: `evals/evals.json` per skill
+  (prompt / expected_output / files / assertions), graded runs with
+  with-skill vs baseline subagents into `grading.json` + `timing.json`,
+  aggregated `benchmark.json` with pass-rate/token/time deltas — see
+  agentskills.io/skill-creation/evaluating-skills and the skill-creator
+  skill (github.com/anthropics/skills, skills/skill-creator: run_loop for
+  60/40 train-test description tuning, eval-viewer HTML report, blind A/B
+  comparator agents). The description-tuning loop shells out to `claude
+  -p`; adapt to `agent -p` for Cursor-primary CI.
 - Drift detection: skills declare tool-specific identifiers; a weekly job
   runs the real tools and files an inbox entry when reality moves.
 - Lifecycle: many learnings = struggling skill; zero invocations in 90
