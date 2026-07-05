@@ -107,8 +107,8 @@ folder afterwards.
 3. On the machine that will run the weekly fold, schedule your headless
    agent CLI against the committed prompt, e.g. weekly via Task Scheduler:
 
-   ```
-   cd %USERPROFILE%\.agents && agent -p "$(cat prompts/weekly-learnings-fold.md)"
+   ```powershell
+   cd $HOME\.agents; agent -p (Get-Content prompts\weekly-learnings-fold.md -Raw)
    ```
 
    (Or set `AGENT_SKILLS_FOLD=1` / `bootstrap.ps1 -FoldMachine` on exactly
