@@ -48,6 +48,12 @@ from typing import NoReturn
 
 PAT_ENV = "AGENT_SKILLS_PAT"
 FOLD_ENV = "AGENT_SKILLS_FOLD"
+# Set to 1 on machines that also run Claude Code: maintains per-skill links
+# from ~/.claude/skills into this repo (Claude Code does not read ~/.agents).
+# Caution: Cursor scans ~/.claude/skills as a compat path WITHOUT deduping —
+# on Cursor machines, disable its "Include third-party Plugins, Skills, and
+# other configs" setting to avoid double context injection.
+CLAUDE_ENV = "AGENT_SKILLS_CLAUDE"
 # Extend this list as the installer grows more required configuration.
 REQUIRED_ENV = [PAT_ENV]
 
@@ -435,6 +441,43 @@ def fold() -> None:
 
 # ---------------------------------------------------------------- nightly
 
+def sync_claude_links() -> None:
+    """Per-skill links ~/.claude/skills/<name> -> skills/<name> (opt-in via env)."""
+    if not os.environ.get(CLAUDE_ENV):
+        return
+    skills_root = REPO_ROOT / "skills"
+    target_root = Path.home() / ".claude" / "skills"
+    if not skills_root.is_dir():
+        return
+    target_root.mkdir(parents=True, exist_ok=True)
+    wanted = {d.name: d for d in skills_root.iterdir() if (d / "SKILL.md").is_file()}
+    for entry in target_root.iterdir():
+        resolved = Path(os.path.realpath(entry))
+        if resolved == entry or skills_root not in resolved.parents:
+            continue  # not a link, or not ours
+        if entry.name not in wanted or resolved != wanted[entry.name]:
+            if entry.is_symlink():
+                entry.unlink()
+            else:
+                os.rmdir(entry)  # Windows junction
+            log(f"claude-link: removed stale {entry}")
+    for name, src in wanted.items():
+        link = target_root / name
+        if Path(os.path.realpath(link)) == src:
+            continue
+        if link.exists() or link.is_symlink():
+            log(f"claude-link: {link} exists and is not a link into this repo; skipping")
+            continue
+        try:
+            link.symlink_to(src, target_is_directory=True)
+        except OSError:
+            # Windows without Developer Mode: fall back to a junction.
+            if os.name != "nt" or run(["cmd", "/c", "mklink", "/J", str(link), str(src)], check=False).returncode != 0:
+                log(f"claude-link: could not link {link}")
+                continue
+        log(f"claude-link: {link} -> {src}")
+
+
 def wsl_leg() -> None:
     if os.name != "nt" or not shutil.which("wsl.exe"):
         return
@@ -461,6 +504,7 @@ def wsl_leg() -> None:
 
 def nightly() -> None:
     harvest()
+    sync_claude_links()
     wsl_leg()
     if os.environ.get(FOLD_ENV):
         if running_in_wsl():
