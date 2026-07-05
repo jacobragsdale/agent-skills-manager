@@ -157,7 +157,7 @@ machines/               per-machine heartbeats (fleet health)
 manage.py               nightly sync/harvest/fold engine (self-updating)
 bootstrap.ps1           one-time Windows machine setup
 AGENTS.md               rules for agents working inside this repo
-ROADMAP.md              where this goes: evals, drift detection, multi-team scale
+ROADMAP.md              where this goes: trigger CI, drift detection, multi-team scale
 ```
 
 `manage.py doctor` verifies any machine; `.manager/` holds local logs,
