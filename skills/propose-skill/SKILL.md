@@ -13,13 +13,19 @@ inside `~/.agents` (the managed clone of the team repo).
 
 ## Step 1 — Qualify and interview
 
-Run the Step 1 interview from `skills/agent-create-skill/SKILL.md`
-(read it first): the ten-word job, trigger phrases, the verified-struggle
-test, the script-vs-prose split. Two extra checks for team proposals:
+Run Step 0 (library fit check) and the Step 1 interview from
+`skills/agent-create-skill/SKILL.md` (read it first): the ten-word job,
+trigger phrases, the verified-struggle test, the script-vs-prose split.
+The library is deliberately small — every skill's description enters every
+teammate's context in every session, so the default answer to "should this
+be a new skill?" is **improve an existing one**. Extra checks for team
+proposals:
 
-- **Search for an existing skill first**: read the descriptions in
-  `~/.agents/skills/*/SKILL.md`. If one nearly fits, propose improving it
-  (a `LEARNINGS.md` entry or a small PR against it) instead of a new skill.
+- **Name the nearest neighbors**: identify the two or three existing skills
+  closest to this job and state why each doesn't cover it. This analysis is
+  REQUIRED in the PR description — a proposal without it gets bounced. If
+  one nearly fits, propose improving it (a `LEARNINGS.md` entry or a small
+  PR against it) instead of a new skill.
 - **Team-relevance**: if the workflow is personal to this user (their
   machine, their side project), recommend a personal skill outside the team
   repo and stop.
@@ -46,7 +52,8 @@ scaffold in place; keep its frontmatter). Then validate — fix every error:
 uv run skills/agent-create-skill/scripts/validate_skill.py skills/<skill-name>
 ```
 
-Run the Step 5 trigger test and show the user the table.
+Run the Step 5 trigger test — including the collision test against every
+existing skill's description — and show the user the table.
 
 ## Step 3 — Push and open the PR
 
@@ -68,8 +75,9 @@ curl -sf -X POST -H "Authorization: Basic $B64" -H "Content-Type: application/js
 ```
 
 PR description must include: the ten-word job, the verified struggle that
-motivated it (concrete, from the interview), the trigger-test table, and
-the proposer's name.
+motivated it (concrete, from the interview), the library fit analysis (the
+nearest existing skills and why each doesn't cover this), the trigger-test
+table including the collision test, and the proposer's name.
 
 ## Step 4 — Leave the clone clean
 

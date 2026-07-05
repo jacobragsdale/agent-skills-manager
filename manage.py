@@ -529,6 +529,10 @@ def doctor() -> None:
         report(bool(os.environ.get(name)), f"env {name}", "" if os.environ.get(name) else "not set")
     report(bool(os.environ.get(FOLD_ENV)) or True, f"env {FOLD_ENV}",
            "set — this is the fold machine" if os.environ.get(FOLD_ENV) else "not set (normal member machine)")
+    report(True, f"env {CLAUDE_ENV}",
+           "set — linking skills into ~/.claude/skills; if Cursor runs here, disable its "
+           "'Include third-party Plugins, Skills, and other configs' setting to avoid double injection"
+           if os.environ.get(CLAUDE_ENV) else "not set (default: no Claude Code bridging)")
     report(shutil.which("git") is not None, "git on PATH")
     report(shutil.which("uv") is not None, "uv on PATH")
     report((REPO_ROOT / ".git").exists(), f"repo at {REPO_ROOT}")

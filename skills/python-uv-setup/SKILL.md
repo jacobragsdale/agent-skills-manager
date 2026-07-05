@@ -1,6 +1,8 @@
 ---
 name: python-uv-setup
 description: "Standardize or set up a Python repo on uv: single pyproject.toml, pre-commit (ruff + basedpyright), .env management, uv run entry points, README/AGENTS.md. Use when onboarding brownfield code to uv, starting a new Python project, fixing uv sync failures (undeclared build deps, SSL, proxy, private PyPI auth), or migrating off requirements.txt / setup.py / custom setup scripts — even if the user just says 'set up this Python repo'. Do NOT use for writing tests (use python-testing) or fixing type errors (use basedpyright-strict)."
+metadata:
+  author: jacob
 ---
 
 # Python environment setup with uv

@@ -1,6 +1,8 @@
 ---
 name: basedpyright-strict
 description: "Set up basedpyright type checking on a Python repo (recommended mode by default, strict on request) and fix failing diagnostics without changing runtime behavior. Use when the user mentions basedpyright, pyright, strict typing, type errors, or a type baseline — even if they just say 'add type checking'. Do NOT use for general lint/format or uv onboarding (use python-uv-setup)."
+metadata:
+  author: jacob
 ---
 
 # basedpyright type checking

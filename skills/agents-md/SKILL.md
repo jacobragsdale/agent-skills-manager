@@ -1,6 +1,8 @@
 ---
 name: agents-md
 description: "Write or overhaul a repo's AGENTS.md (or CLAUDE.md) so coding agents work well there. Use when creating agent instructions for a repo, auditing a bloated or ignored AGENTS.md/CLAUDE.md, when agents repeat the same mistakes in a codebase, or when wiring instruction files across Cursor, Claude Code, Codex, and Copilot. Do NOT use for reusable task workflows — those are skills (use agent-create-skill)."
+metadata:
+  author: jacob
 ---
 
 # Writing a repo's AGENTS.md

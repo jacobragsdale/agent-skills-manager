@@ -18,6 +18,27 @@ and loads skills — and what that means for descriptions and body size — read
 **Before doing anything else, read `LEARNINGS.md` in this skill's folder.**
 Entries there are corrections from real use and override anything below.
 
+## Step 0 — Library fit check (before the interview)
+
+Read the `name` and `description` of every existing skill in the target
+library first. Every model-invocable skill's description sits in context in
+**every session, for every person** using the library — Cursor injects all
+of them with no budget — so a new skill must pay rent, and overlapping
+trigger domains make existing skills misfire. Decide, and tell the user
+which case applies:
+
+- The job falls inside an existing skill's domain → **improve that skill**
+  (see "Improving an existing skill") instead of creating one.
+- The job is adjacent to an existing skill → proceed only with an explicit
+  boundary: which skill owns which trigger phrases, written into BOTH
+  descriptions as "Do NOT use when … (use <other>)".
+- Two existing skills already blur together → propose a merge or split
+  before adding a third.
+
+Default to fewer, broader-bodied skills over many narrow ones. The library
+growing by one is a cost every teammate pays every session; "improve an
+existing skill" is the answer more often than "create".
+
 ## Step 1 — Clarify before writing anything
 
 Skills fail more often from fuzzy intent than bad prose. Interview the user
@@ -25,7 +46,8 @@ before scaffolding. Skip a question only if the request already answers it.
 
 1. **The ten-word job.** Ask the user to state what the skill does in one short
    sentence. If it takes two sentences joined by "and", it is two skills —
-   propose the split.
+   propose the split (but check each half against Step 0 — a half that fits
+   inside an existing skill goes there, not into a new one).
 2. **Trigger phrases.** What would the user actually type when they want this?
    And what nearby requests should *not* trigger it? These become the
    description and the trigger test in Step 5. Skills are model-invoked by
@@ -149,7 +171,13 @@ ever sees — and show the user the table of message → expected → verdict.
 Revise until all pass: broaden trigger coverage for false negatives, add a
 "Do NOT use when" boundary for false positives, and never fix a miss by
 making the description vaguer or by pasting a failed query verbatim —
-generalize to its category. Freeze the final table as
+generalize to its category.
+
+Then run the **collision test**: judge every positive message against each
+OTHER skill's name + description in the library. Any message that plausibly
+routes to two skills is a collision — resolve it by tightening a boundary
+in one of the two descriptions (agree with the user which skill owns that
+phrase), never by leaving it ambiguous. Freeze the final table as
 `tests/triggers.md` in the skill folder for future regression runs.
 
 ## Step 6 — Wire the learnings loop
