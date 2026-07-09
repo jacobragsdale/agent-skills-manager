@@ -22,8 +22,7 @@ Commands (run from the repo root, i.e. `uv run manage.py <cmd>`):
   sweep-proposals
             Open PRs for pushed skill/* proposal branches that don't have
             one yet (requires AGENT_SKILLS_PAT; maintainer machine).
-  nightly   harvest, then (on Windows, if WSL has a clone) run harvest inside
-            WSL, then fold if AGENT_SKILLS_FOLD=1, then sweep proposal
+  nightly   harvest, then fold if AGENT_SKILLS_FOLD=1, then sweep proposal
             branches into PRs if a PAT is present. This is what the Windows
             Scheduled Task invokes.
 
@@ -55,6 +54,7 @@ from pathlib import Path
 from typing import NoReturn
 
 PAT_ENV = "AGENT_SKILLS_PAT"
+NET_TIMEOUT = 300  # seconds; cap every network operation so nothing can hang the job
 FOLD_ENV = "AGENT_SKILLS_FOLD"
 # Set to 1 on machines that also run Claude Code: maintains per-skill links
 # from ~/.claude/skills into this repo (Claude Code does not read ~/.agents).
@@ -99,11 +99,32 @@ def die(msg: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def run(args: list[str], check: bool = True, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def run(
+    args: list[str], check: bool = True, cwd: Path | None = None, timeout: int | None = None
+) -> subprocess.CompletedProcess:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # never hang unattended waiting for a password
-    proc = subprocess.run(
-        args, cwd=cwd or REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env
+    child = subprocess.Popen(
+        args, cwd=cwd or REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", env=env,
     )
+    try:
+        out, err = child.communicate(timeout=timeout)
+        proc = subprocess.CompletedProcess(args, child.returncode, stdout=out, stderr=err)
+    except subprocess.TimeoutExpired:
+        # A hung child (stalled network, dead VPN) must fail loudly, not freeze
+        # the nightly job or a first install forever. On Windows, `git` is a
+        # shim that spawns the real git.exe: killing only the direct child
+        # leaves orphans holding our pipes (communicate() then blocks forever),
+        # so take down the whole process tree.
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/pid", str(child.pid), "/T", "/F"], capture_output=True)
+        else:
+            child.kill()
+        try:
+            out, err = child.communicate(timeout=30)
+        except (subprocess.TimeoutExpired, OSError):
+            out, err = "", ""
+        proc = subprocess.CompletedProcess(args, 124, stdout=out, stderr=(err or "") + f"\ntimed out after {timeout}s")
     if check and proc.returncode != 0:
         die(f"command failed ({proc.returncode}): {' '.join(args)}\n{proc.stdout}\n{proc.stderr}")
     return proc
@@ -124,7 +145,7 @@ def notify_user(msg: str) -> None:
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Agent Skills').Show("
         "[Windows.UI.Notifications.ToastNotification]::new($t))"
     )
-    run(["powershell", "-NoProfile", "-Command", script], check=False)
+    run(["powershell", "-NoProfile", "-Command", script], check=False, timeout=30)
 
 
 def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -144,8 +165,8 @@ def git_net(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     (maintainer machine), the PAT rides as a per-invocation header.
     """
     if not os.environ.get(PAT_ENV):
-        return run(["git", *args], check=check)
-    return run(["git", "-c", f"http.extraheader={auth_header()}", *args], check=check)
+        return run(["git", *args], check=check, timeout=NET_TIMEOUT)
+    return run(["git", "-c", f"http.extraheader={auth_header()}", *args], check=check, timeout=NET_TIMEOUT)
 
 
 AUTH_ERROR_MARKERS = (
@@ -181,19 +202,10 @@ def ensure_ready() -> str:
     proc = git_net("fetch", "origin", "--prune", check=False)
     if proc.returncode != 0:
         if is_auth_failure(proc):
-            notify_user("Azure DevOps sign-in expired — run fix-signin.cmd in your .agents folder.")
+            notify_user("Azure DevOps sign-in expired - run fix-signin.cmd in your .agents folder.")
             die("authentication to origin failed; interactive sign-in required (run fix-signin.cmd)")
         die(f"git fetch failed: {(proc.stderr or proc.stdout).strip()[:300]}")
     return default_branch()
-
-
-def running_in_wsl() -> bool:
-    if os.name == "nt":
-        return False
-    try:
-        return "microsoft" in Path("/proc/version").read_text().lower()
-    except OSError:
-        return False
 
 
 # ---------------------------------------------------------------- harvest
@@ -248,9 +260,14 @@ def push_with_retry(branch: str) -> None:
 def identity() -> tuple[str, str]:
     user = re.sub(r"[^A-Za-z0-9._-]", "_", getpass.getuser())
     host = re.sub(r"[^A-Za-z0-9._-]", "_", socket.gethostname())
-    if running_in_wsl():
-        host += "-wsl"  # the Windows side of the same machine has its own clone
     return user, host
+
+
+def git_commit(message: str) -> None:
+    """Commit with a self-supplied identity: fresh machines have no git config,
+    and `git commit` hard-fails without user.name/user.email."""
+    user, host = identity()
+    git("-c", f"user.name={user}", "-c", f"user.email={user}@{host}", "commit", "-m", message)
 
 
 def frontmatter(user: str, host: str, now: dt.datetime) -> list[str]:
@@ -312,7 +329,7 @@ def write_heartbeat(user: str, host: str, now: dt.datetime) -> None:
     (MACHINES / f"{host}.json").write_text(json.dumps({
         "user": user,
         "host": host,
-        "os": "wsl" if running_in_wsl() else os.name,
+        "os": os.name,
         "last_sync": now.date().isoformat(),
     }, indent=2) + "\n", encoding="utf-8")
 
@@ -346,7 +363,7 @@ def harvest() -> None:
         log("harvest: nothing new; working tree synced to " + base)
         return
     parts = "; ".join(p for p in shipped if p) or "heartbeat only"
-    git("commit", "-m", f"sync: {parts} from {user}@{host}")
+    git_commit(f"sync: {parts} from {user}@{host}")
     push_with_retry(branch)
     log(f"harvest: pushed {parts}")
 
@@ -400,7 +417,7 @@ def ado_api(method: str, url: str, body: dict | None = None) -> dict:
     req.add_header("Content-Type", "application/json")
     data = json.dumps(body).encode() if body is not None else None
     try:
-        with urllib.request.urlopen(req, data=data) as resp:
+        with urllib.request.urlopen(req, data=data, timeout=NET_TIMEOUT) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         die(f"Azure DevOps API {method} {url} failed: {e.code} {e.read().decode()[:500]}")
@@ -476,7 +493,7 @@ def fold() -> None:
         git("add", "--", LEARNINGS_GLOB)
         today = dt.date.today().isoformat()
         summary = ", ".join(f"{skill}: {n}" for skill, n in sorted(folded.items())) or "dedupe only"
-        git("commit", "-m", f"learnings: fold inbox ({today}) — {summary}")
+        git_commit(f"learnings: fold inbox ({today}) - {summary}")
         git_net("push", "origin", f"+{FOLD_BRANCH}")
 
         description = (
@@ -559,38 +576,9 @@ def sync_claude_links() -> None:
         log(f"claude-link: {link} -> {src}")
 
 
-def wsl_leg() -> None:
-    if os.name != "nt" or not shutil.which("wsl.exe"):
-        return
-    # Make the PAT flow into WSL for this invocation.
-    wslenv = os.environ.get("WSLENV", "")
-    if PAT_ENV not in wslenv.split(":"):
-        os.environ["WSLENV"] = f"{wslenv}:{PAT_ENV}/u".strip(":")
-    probe = run(["wsl.exe", "-e", "bash", "-lc", "test -d ~/.agents/.git"], check=False)
-    if probe.returncode != 0:
-        log("nightly: WSL present but no ~/.agents clone inside it; skipping WSL leg")
-        return
-    log("nightly: running harvest inside WSL")
-    proc = run(
-        ["wsl.exe", "-e", "bash", "-lc",
-         'cd ~/.agents && PATH="$HOME/.local/bin:$PATH" uv run manage.py harvest'],
-        check=False,
-    )
-    for stream in (proc.stdout, proc.stderr):
-        if stream.strip():
-            log("  [wsl] " + stream.strip().replace("\n", "\n  [wsl] "))
-    if proc.returncode != 0:
-        log(f"nightly: WSL harvest failed with exit code {proc.returncode} (continuing)")
-
-
 def nightly() -> None:
     harvest()
     sync_claude_links()
-    wsl_leg()
-    if running_in_wsl():
-        if os.environ.get(FOLD_ENV) or os.environ.get(PAT_ENV):
-            log("nightly: fold/sweep run on the Windows side only; skipping inside WSL")
-        return
     if os.environ.get(FOLD_ENV):
         fold()
     if os.environ.get(PAT_ENV):
@@ -604,7 +592,8 @@ def doctor() -> None:
 
     def report(ok: bool, label: str, detail: str = "") -> None:
         nonlocal problems
-        print(f"  [{'ok' if ok else 'FAIL'}] {label}" + (f" — {detail}" if detail else ""))
+        # ASCII-only console output: Windows consoles/SSH sessions mangle em dashes.
+        print(f"  [{'ok' if ok else 'FAIL'}] {label}" + (f" - {detail}" if detail else ""))
         if not ok:
             problems += 1
 
@@ -612,12 +601,12 @@ def doctor() -> None:
     for name in REQUIRED_ENV:
         report(bool(os.environ.get(name)), f"env {name}", "" if os.environ.get(name) else "not set")
     report(True, f"env {PAT_ENV}",
-           "set — maintainer machine (fold + proposal-PR sweep enabled)"
+           "set: maintainer machine (fold + proposal-PR sweep enabled)"
            if os.environ.get(PAT_ENV) else "not set (normal: git auth via Git Credential Manager)")
     report(bool(os.environ.get(FOLD_ENV)) or True, f"env {FOLD_ENV}",
-           "set — this is the fold machine" if os.environ.get(FOLD_ENV) else "not set (normal member machine)")
+           "set: this is the fold machine" if os.environ.get(FOLD_ENV) else "not set (normal member machine)")
     report(True, f"env {CLAUDE_ENV}",
-           "set — linking skills into ~/.claude/skills; if Cursor runs here, disable its "
+           "set: linking skills into ~/.claude/skills; if Cursor runs here, disable its "
            "'Include third-party Plugins, Skills, and other configs' setting to avoid double injection"
            if os.environ.get(CLAUDE_ENV) else "not set (default: no Claude Code bridging)")
     report(shutil.which("git") is not None, "git on PATH")
@@ -626,9 +615,13 @@ def doctor() -> None:
     if (REPO_ROOT / ".git").exists():
         remote = parse_remote()
         url = git("remote", "get-url", "origin", check=False).stdout.strip()
-        report(remote is not None, "origin is Azure DevOps", url)
+        if os.environ.get(PAT_ENV) or os.environ.get(FOLD_ENV):
+            # Only fold/sweep call the ADO REST API; members work with any remote.
+            report(remote is not None, "origin is Azure DevOps (required for fold/sweep)", url)
+        else:
+            report(True, "origin", url + ("" if remote else " (non-ADO: fold PR automation must live elsewhere)"))
         fetch = git_net("fetch", "origin", check=False)
-        auth_hint = "sign-in needed — run fix-signin.cmd" if is_auth_failure(fetch) else ""
+        auth_hint = "sign-in needed - run fix-signin.cmd" if is_auth_failure(fetch) else ""
         report(fetch.returncode == 0, "can fetch from origin",
                "" if fetch.returncode == 0 else (auth_hint or fetch.stderr.strip()[:200]))
     report(INBOX.is_dir() or not (REPO_ROOT / "learnings").exists(), "learnings/inbox exists",

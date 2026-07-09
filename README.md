@@ -20,7 +20,7 @@ system is **git plus one scheduled task**.
 flowchart LR
     subgraph fleet["Every machine, nightly"]
         A["Agent uses a skill,<br/>appends corrections to LEARNINGS.md,<br/>usage + requests to local spools"]
-        H["manage.py nightly<br/>(Windows Task Scheduler,<br/>drives WSL too)"]
+        H["manage.py nightly<br/>(Windows Task Scheduler)"]
         A --> H
     end
 
@@ -73,9 +73,9 @@ scaffolds, validates, and opens the PR.
   stdlib-only, PEP 723) updates itself with every nightly pull. New
   features and dependencies reach the whole fleet without reinstalling
   anything.
-- **One scheduled task, even with WSL.** cron inside WSL only fires while
-  the VM is running. The Windows task syncs both sides
-  (`wsl.exe -e bash -lc …`); a broken WSL never blocks the Windows night.
+- **Windows 11 only, on purpose.** One OS, one scheduled task, one install
+  path to polish and test. Dependencies live in a small table at the top of
+  `bootstrap.ps1` — adding one for the whole fleet is a one-row change.
 - **Improvement is gated, not automatic.** Agents may only append
   learnings; skills change through the weekly fold PR, with evidence in the
   description and one commit per fold so a reviewer can drop any single
@@ -87,22 +87,28 @@ scaffolds, validates, and opens the PR.
   points at `fix-signin.cmd` — one double-click repairs it. The only PAT in
   the fleet lives on the maintainer machine, for the pull-request API.
 
-## Quick start (teammate, Windows)
+## Quick start (teammate, Windows 11)
 
-Clone the repo **anywhere** — the clone is just how you obtain the script:
+If your team hosts the install script (maintainer setup below), the whole
+install is one line in PowerShell — no git needed first, no tokens, no
+settings:
 
 ```powershell
-git clone <repo-url> skills-setup; cd skills-setup
-powershell -ExecutionPolicy Bypass -File bootstrap.ps1
+irm https://<your-host>/bootstrap.ps1 | iex
 ```
 
-That's the whole install: no tokens, no settings. When git first talks to
-Azure DevOps, the familiar Microsoft sign-in window opens once. Bootstrap
-installs git + uv (winget with fallbacks), creates the managed clone at
-`%USERPROFILE%\.agents`, mirrors everything into WSL if present, registers
-the nightly Scheduled Task, and runs a first sync — your machine appears on
-the team dashboard immediately. Idempotent — re-run any time; delete the
-setup folder afterwards.
+No script host? Then it's two clicks and no terminal at all: open the repo
+in Azure DevOps in your browser, choose **⋯ → Download as Zip**, extract it
+anywhere, and double-click **install.cmd**. (Or, if you already have git:
+clone the repo anywhere and run
+`powershell -ExecutionPolicy Bypass -File bootstrap.ps1`.)
+
+Every entry point runs the same installer: it installs git + uv (winget
+with fallbacks), creates the managed clone at `%USERPROFILE%\.agents`,
+registers the nightly Scheduled Task, and runs a first sync — your machine
+appears on the team dashboard immediately. When git first talks to Azure DevOps, the familiar Microsoft
+sign-in window opens once; that is the only prompt. Idempotent — re-run any
+time; `bootstrap.ps1 -Uninstall` removes the task and the clone.
 
 ## Which agents pick this up
 
@@ -127,22 +133,30 @@ descriptions instead — zero manual configuration per teammate.
 ## Setting up for your team (maintainer, one-time)
 
 1. Push this repo to your Azure DevOps project.
-2. Distribute the quick-start above with your repo URL.
-3. On YOUR machine only, create an ADO PAT (Code read & write) and run
+2. Set `$DefaultRepoUrl` near the top of `bootstrap.ps1` to your repo URL
+   and commit — members then never need to know or type it.
+3. Host `bootstrap.ps1` at any HTTPS URL teammates can reach **without
+   signing in** (intranet static server, Azure Storage static website,
+   internal tools page) and distribute the one-liner. Re-publish the copy
+   whenever `bootstrap.ps1` changes. Azure DevOps itself cannot serve raw
+   files anonymously — that is why the Zip + `install.cmd` path exists as
+   the zero-hosting fallback; if you skip this step, distribute those
+   instructions instead.
+4. On YOUR machine only, create an ADO PAT (Code read & write) and run
    `bootstrap.ps1 -FoldMachine` with `$env:AGENT_SKILLS_PAT` set — this is
    the one machine that talks to the PR API. Its nightly job then runs the
    mechanical fold and opens PRs for teammates' pushed `skill/*` proposal
    branches (`manage.py sweep-proposals`).
-4. For the judgment-enhanced weekly fold, schedule your headless agent CLI
+5. For the judgment-enhanced weekly fold, schedule your headless agent CLI
    against the committed prompt:
 
    ```powershell
    cd $HOME\.agents; agent -p (Get-Content prompts\weekly-learnings-fold.md -Raw)
    ```
 
-5. Optional: set `TEAMS_WEBHOOK_URL` on the fold machine for a weekly
+6. Optional: set `TEAMS_WEBHOOK_URL` on the fold machine for a weekly
    digest that credits contributors whose lessons got promoted.
-6. Recommended: branch policy requiring review on `learnings/fold` PRs.
+7. Recommended: branch policy requiring review on `learnings/fold` PRs.
 
 Hosting elsewhere? Harvest works with any git remote; only the PR-creation
 and auth-header helpers are Azure DevOps-specific (one small function each
@@ -158,8 +172,10 @@ metrics/inbox/ + DASHBOARD.md    usage telemetry and the weekly dashboard
 requests/inbox/ + BACKLOG.md     demand-ranked backlog of skills to build
 machines/               per-machine heartbeats (fleet health)
 manage.py               nightly sync/harvest/fold/sweep engine (self-updating)
-bootstrap.ps1           one-time Windows machine setup
+bootstrap.ps1           one-time Windows machine setup (irm | iex, zip, or clone)
+install.cmd             double-click installer for the zip-download path
 fix-signin.cmd          one-click repair when the cached sign-in expires
+TESTING.md              clean-VM install test protocol (Windows 11)
 AGENTS.md               rules for agents working inside this repo
 ROADMAP.md              where this goes: trigger CI, drift detection, multi-team scale
 ```

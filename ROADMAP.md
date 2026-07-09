@@ -7,8 +7,9 @@ coordination" mechanism, and everything below rides on it.
 
 ## 1. Pilot (built)
 
-- Windows fleet bootstrap (`bootstrap.ps1`): prereqs, PAT, `~/.agents`
-  clone, WSL mirror, nightly Scheduled Task.
+- Windows fleet bootstrap (`bootstrap.ps1`): dependencies (extensible
+  table), `~/.agents` clone, nightly Scheduled Task; runs via one-liner,
+  zip + `install.cmd`, or clone.
 - Nightly harvest: LEARNINGS.md diffs → `learnings/inbox/` → hard reset.
   Doubles as the update pull; machines are appliances.
 - Weekly agent-driven fold (`prompts/weekly-learnings-fold.md`): semantic
