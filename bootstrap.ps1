@@ -43,10 +43,12 @@ $ErrorActionPreference = 'Stop'
 $RuntimeDir = Join-Path $HOME '.agents'
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set for this Windows user.' }
 $StateDir = Join-Path $env:LOCALAPPDATA 'AgentSkills'
+$UninstallDir = Join-Path $StateDir 'uninstall'
+$UninstallRegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSkills'
 $TaskName = 'AgentSkillsNightly'
 $StartTime = Get-Date
 $script:Step = 0
-$TotalSteps = 6
+$TotalSteps = 7
 
 function Write-Step([string]$Message) {
     $script:Step++
@@ -82,21 +84,105 @@ function Install-Dependency([hashtable]$Dependency) {
     }
 }
 
+function Install-Uninstaller {
+    $source = Join-Path $RuntimeDir 'uninstall.ps1'
+    if (-not (Test-Path $source -PathType Leaf)) {
+        throw "The runtime does not contain uninstall.ps1: $source"
+    }
+
+    New-Item -ItemType Directory -Force -Path $UninstallDir | Out-Null
+    $target = Join-Path $UninstallDir 'uninstall.ps1'
+    Copy-Item -Force $source $target
+
+    $manifest = [ordered]@{
+        schema_version = 1
+        runtime_path = $RuntimeDir
+        runtime_repo_url = $RepoUrl
+        state_path = $StateDir
+    }
+    $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 `
+        (Join-Path $UninstallDir 'install.json')
+
+    $version = (git -C $RuntimeDir rev-parse --short=12 HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $version) {
+        throw 'Could not determine the installed runtime version.'
+    }
+    $uninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$target`" -Pause"
+    New-Item -Path $UninstallRegistryKey -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name DisplayName `
+        -Value 'Team Agent Skills' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name DisplayVersion `
+        -Value $version -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name Publisher `
+        -Value 'Team Agent Skills' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name InstallLocation `
+        -Value $RuntimeDir -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name UninstallString `
+        -Value $uninstallString -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name NoModify `
+        -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $UninstallRegistryKey -Name NoRepair `
+        -Value 1 -PropertyType DWord -Force | Out-Null
+}
+
+function Register-NightlyTask([string]$Command) {
+    try {
+        $clock = [datetime]::ParseExact(
+            $TaskTime,
+            'HH:mm',
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+    } catch {
+        throw "TaskTime must use 24-hour HH:mm format: $TaskTime"
+    }
+
+    $service = New-Object -ComObject 'Schedule.Service'
+    $service.Connect()
+    $folder = $service.GetFolder('\')
+    $definition = $service.NewTask(0)
+    $definition.RegistrationInfo.Description = `
+        'Publishes Agent Skills events and safely fast-forwards the runtime.'
+    $definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
+    $definition.Principal.RunLevel = 0  # TASK_RUNLEVEL_LUA
+    $definition.Settings.Enabled = $true
+    $definition.Settings.StartWhenAvailable = $true
+    $definition.Settings.ExecutionTimeLimit = 'PT1H'
+    $definition.Settings.MultipleInstances = 2  # TASK_INSTANCES_IGNORE_NEW
+
+    $action = $definition.Actions.Create(0)  # TASK_ACTION_EXEC
+    $action.Path = 'powershell.exe'
+    $action.Arguments = `
+        "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$Command`""
+
+    $trigger = $definition.Triggers.Create(2)  # TASK_TRIGGER_DAILY
+    $trigger.StartBoundary = (Get-Date).Date.AddHours($clock.Hour).AddMinutes($clock.Minute).ToString('s')
+    $trigger.DaysInterval = 1
+    $trigger.Enabled = $true
+
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $registered = $folder.RegisterTaskDefinition(
+        $TaskName,
+        $definition,
+        6,  # TASK_CREATE_OR_UPDATE
+        $currentUser,
+        $null,
+        3,  # TASK_LOGON_INTERACTIVE_TOKEN
+        $null
+    )
+    if (-not $registered) { throw "Task '$TaskName' was not registered." }
+}
+
 if ($Uninstall) {
-    Write-Host 'Removing the Agent Skills runtime from this user.' -ForegroundColor Cyan
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-    Write-Host "  Scheduled task '$TaskName' removed."
-    if (Test-Path $RuntimeDir) {
-        $answer = Read-Host "  Delete the runtime checkout $RuntimeDir? [y/N]"
-        if ($answer -match '^[Yy]') { Remove-Item -Recurse -Force $RuntimeDir }
+    $candidates = @(
+        (Join-Path $UninstallDir 'uninstall.ps1'),
+        $(if ($PSScriptRoot) { Join-Path $PSScriptRoot 'uninstall.ps1' })
+    ) | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) }
+    $uninstaller = $candidates | Select-Object -First 1
+    if (-not $uninstaller) {
+        throw 'uninstall.ps1 was not found. Download it from the same internal location as bootstrap.ps1.'
     }
-    if (Test-Path $StateDir) {
-        $pending = @(Get-ChildItem (Join-Path $StateDir 'events\pending') -Filter '*.json' -ErrorAction SilentlyContinue).Count
-        $answer = Read-Host "  Delete local state $StateDir ($pending pending event(s))? [y/N]"
-        if ($answer -match '^[Yy]') { Remove-Item -Recurse -Force $StateDir }
-    }
-    Write-Host 'Uninstall complete. Git and uv were left installed.' -ForegroundColor Green
-    return
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $uninstaller
+    exit $LASTEXITCODE
 }
 
 Write-Host ''
@@ -157,6 +243,10 @@ try {
     Pop-Location
 }
 
+Write-Step 'Registering Windows uninstall support'
+Install-Uninstaller
+Write-Note 'Available in Windows Settings under Installed apps.'
+
 Write-Step "Registering the nightly sync (daily at $TaskTime)"
 $logPath = Join-Path $StateDir 'logs\task.log'
 $runtimeEscaped = $RuntimeDir -replace "'", "''"
@@ -164,13 +254,7 @@ $stateEscaped = $StateDir -replace "'", "''"
 $uvEscaped = $uvPath -replace "'", "''"
 $logEscaped = $logPath -replace "'", "''"
 $command = "Set-Location '$runtimeEscaped'; & '$uvEscaped' run manage.py nightly --state-dir '$stateEscaped' *>> '$logEscaped'"
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$command`""
-$trigger = New-ScheduledTaskTrigger -Daily -At $TaskTime
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-    -Settings $settings -Force | Out-Null
+Register-NightlyTask $command
 Write-Note "Task '$TaskName' registered."
 
 Write-Step 'Publishing the first heartbeat and verifying the install'
@@ -195,5 +279,6 @@ if (-not $healthy) {
 Write-Host "All set (took ${elapsed}s). Cursor can now discover the team skills." -ForegroundColor Green
 Write-Host "  Runtime: $RuntimeDir"
 Write-Host "  Local state and logs: $StateDir"
+Write-Host '  Uninstall: Windows Settings > Apps > Installed apps > Team Agent Skills.'
 Write-Host '  Repair expired sign-in: double-click fix-signin.cmd in the runtime folder.'
 Write-Host '  Try: open Cursor and ask "set up this Python repo to our standards".'

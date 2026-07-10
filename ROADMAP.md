@@ -21,6 +21,8 @@ an untrusted inbox, and improve skills through ordinary reviewed pull requests.
   idempotent learning append.
 - A Cursor Skill Adoption canary protocol that keeps platform counts separate
   from locally recorded invocations.
+- A per-user Windows Installed apps entry and safety-checked standalone
+  uninstaller that preserves modified or unrecognized runtime files.
 - Teammate skill authoring, proposal sweeping, and uncovered-skill request
   collection removed.
 - Standard-library unit and local bare-Git integration tests, including

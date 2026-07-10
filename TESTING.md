@@ -37,10 +37,16 @@ Restore the clean snapshot before each independent install run.
 | I3 | Browser Zip, extract, `install.cmd` | Standard | Record Mark-of-the-Web and SmartScreen text |
 | I4 | Explicit `-RepoUrl` and `-InboxRepoUrl` | Standard | Works with both defaults blank |
 | I5 | Immediate re-run after I1 | Standard | Same machine ID, no duplicate task, no lost events |
-| I6 | `bootstrap.ps1 -Uninstall` | Standard | Separate runtime/state prompts show pending count |
-| I7 | Reinstall after I6 | Standard | Clean new install; identity behavior documented |
+| I6 | Windows Settings > Installed apps > Team Agent Skills > Uninstall | Standard | Clean runtime, state, task, uninstall entry, and uninstaller files are removed; Git and uv remain |
+| I7 | Reinstall after full I6 removal | Standard | Clean new install receives a new installation UUID |
 | I8 | Bad skills URL, then bad inbox URL | Standard | Actionable error and nonzero exit; no green success banner |
 | I9 | Cancel GCM sign-in | Standard | No hang; rerun recovers |
+| I10 | Double-click `uninstall.cmd` | Standard | Same behavior and visible final summary as Installed apps |
+| I11 | Uninstall with pending events | Standard | Delete, keep-state, and cancel choices are explicit; installation UUID is shown before state deletion |
+| I12 | Uninstall while `AgentSkillsNightly` is running | Standard | Running task stops before file deletion and cannot recreate state |
+| I13 | Uninstall with a dirty runtime, then with a wrong-origin runtime | Standard | Dirty runtime needs explicit `DELETE`; wrong-origin runtime is retained and uninstall reports partial completion |
+| I14 | Uninstall a partial install, then run uninstall again | Standard | Missing artifacts are harmless, failures are truthful, and rerun is idempotent |
+| I15 | Reinstall after uninstall with retained state | Standard | Existing installation UUID is preserved; pending events are published, retained, or quarantined by normal validation without being discarded |
 
 ## Runtime and scheduler matrix
 
@@ -131,6 +137,7 @@ Expected results:
 
 - [ ] Runtime clone exists at `%USERPROFILE%\.agents` and is clean on `main`
 - [ ] Local state exists only under `%LOCALAPPDATA%\AgentSkills`
+- [ ] Team Agent Skills appears in Installed apps for the installing user
 - [ ] `config.json` contains random machine ID and the two expected remotes
 - [ ] `AgentSkillsNightly` has `StartWhenAvailable`, one-hour limit, and `IgnoreNew`
 - [ ] First heartbeat is present on the expected inbox branch
@@ -139,7 +146,10 @@ Expected results:
 - [ ] Cursor discovers and invokes a runtime skill
 - [ ] Failure cases preserve runtime files and pending events
 - [ ] Aggregation tests and canary comparison are recorded
-- [ ] Uninstall explains pending-event loss before deleting state
+- [ ] Uninstall stops and removes the task before deleting files
+- [ ] Uninstall explains pending-event and server-data behavior before deleting state
+- [ ] Uninstall protects modified and unrecognized runtime files
+- [ ] Successful full uninstall removes every owned artifact but leaves Git, uv, and shared credentials
 
 ## Results
 
@@ -196,3 +206,60 @@ Not yet verified:
 - Cursor contained both actual runtime `SKILL.md` files, but the GUI stopped at
   account login. Discovery, explicit/automatic invocation, and platform
   Analytics comparison remain blocked until an interactive Cursor sign-in.
+
+### 2026-07-10 — home-server Windows 11 VM (uninstaller pass)
+
+Environment:
+
+- Same Windows 11 Pro 10.0.26200 VM and Cursor 3.10.11 installation as the
+  earlier session. Cursor remained logged out, so this run did not repeat the
+  discovery canary.
+- Local bare skills and inbox repositories on the VM exercised real clone,
+  fetch, task, registry, event, and filesystem behavior without Azure DevOps
+  or Git Credential Manager.
+- Git 2.55.0 and uv 0.11.26 were already installed. A temporary local
+  non-administrator account used test-local uv and Python paths so dependency
+  installation was not part of this run.
+
+Passed observations:
+
+- Windows PowerShell 5.1 parsed `bootstrap.ps1` and `uninstall.ps1`; both files
+  remained ASCII. The full Python/unit/skill validation suite also passed.
+- Windows Settings showed exactly one **Team Agent Skills** result with Modify
+  disabled and Uninstall enabled. The Settings flow opened the uninstaller,
+  which displayed the runtime, state, pending count, installation UUID, and
+  server-data warning. Successful removal immediately removed the Settings
+  result.
+- Full uninstall removed the task, runtime, local state, registry entry,
+  installed uninstaller, and temporary self-copy. Git and uv remained usable.
+  A second uninstall with every artifact absent also exited 0.
+- `bootstrap.ps1 -Uninstall` remained compatible. `uninstall.cmd` launched a
+  separate, pausing PowerShell window before its own runtime file was removed;
+  its scripted `-Force` path completed successfully.
+- With one pending event, cancel made no changes, keep-state retained the UUID
+  and event file, and delete removed state only after explicit input. Reinstall
+  after keep-state reused the UUID and subjected the retained file to normal
+  event validation rather than silently dropping it.
+- A dirty runtime made `-Force` exit 1 without changing the task, state,
+  registry, or marker file. `-RemoveModifiedRuntime` was required for
+  destructive cleanup. A wrong-origin runtime was retained with state and retry
+  metadata, returned partial exit 2, and completed after the origin was fixed.
+- An actively running 60-second scheduled action was stopped and unregistered
+  before deletion; its post-sleep marker never appeared and state was not
+  recreated.
+- The original ScheduledTasks cmdlets failed with Access denied under a
+  temporary standard user. Replacing them with the per-user Task Scheduler COM
+  API produced a healthy install and successful `doctor` without elevation.
+  The registered task had `StartWhenAvailable=true`, `ExecutionTimeLimit=PT1H`,
+  `MultipleInstances=2` (`IgnoreNew`), and interactive-token logon. The same
+  standard user then fully uninstalled it with exit 0.
+
+Not verified in this run:
+
+- The Installed apps GUI and a running interactive task were exercised with
+  the administrator desktop session; the standard-user pass was driven over
+  SSH. The standard-user registry entry, task contract, healthy `doctor`, and
+  full uninstall were verified directly.
+- Hosted HTTP install/uninstall, missing dependency installation, real Azure
+  DevOps permissions, GCM prompts, and Cursor discovery still require their
+  separate matrix runs.

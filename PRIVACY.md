@@ -104,3 +104,16 @@ If an event contains prohibited or sensitive content:
 Questions or deletion requests go to the skills repository maintainers. The
 installation UUID is stored in `%LOCALAPPDATA%\AgentSkills\config.json` and is
 the identifier needed to locate a machine's inbox branches.
+
+## Uninstall and server-side deletion
+
+Uninstall removes the scheduled task and local runtime, and can remove all
+local events, logs, configuration, and disposable clones. It does not publish
+an uninstall event and does not automatically delete events already pushed to
+the inbox repository, Git-provider audit records, reviewed aggregate history,
+or learnings already merged through a pull request.
+
+Before choosing to delete local state, the uninstaller displays the
+installation UUID. A user who may request deletion of published raw events
+should retain that UUID and contact the skills repository maintainers. Normal
+server-side retention still applies when no deletion request is made.

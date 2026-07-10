@@ -200,13 +200,47 @@ The installer:
 2. Clones the runtime to `%USERPROFILE%\.agents`.
 3. Creates configuration and mutable state in
    `%LOCALAPPDATA%\AgentSkills`.
-4. Registers `AgentSkillsNightly` with `StartWhenAvailable` and
+4. Registers a per-user **Team Agent Skills** entry in Windows Installed apps.
+5. Registers `AgentSkillsNightly` with `StartWhenAvailable` and
    `IgnoreNew` multiple-instance behavior.
-5. Publishes a first heartbeat, runs a safe sync, and executes `doctor`.
+6. Publishes a first heartbeat, runs a safe sync, and executes `doctor`.
 
 If verification fails, installation exits nonzero. Re-running is idempotent.
-`bootstrap.ps1 -Uninstall` asks separately before deleting the runtime and
-state so pending events are visible before removal.
+
+## Uninstall for a teammate
+
+Open **Windows Settings > Apps > Installed apps**, find **Team Agent Skills**,
+and select **Uninstall**. As a local fallback, double-click `uninstall.cmd` in
+the runtime folder or run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "$HOME\.agents\uninstall.ps1"
+
+# Backward-compatible entry point
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "$HOME\.agents\bootstrap.ps1" -Uninstall
+```
+
+Maintainers can also host the ASCII `uninstall.ps1` beside `bootstrap.ps1` so
+an installation with a damaged runtime can use:
+
+```powershell
+irm https://<internal-host>/uninstall.ps1 | iex
+```
+
+The uninstaller inventories everything before changing it, stops and removes
+the nightly task before deleting files, and removes only a runtime whose path
+and Git origin match the installation metadata. A modified runtime requires an
+explicit destructive confirmation. An unrecognized `~\.agents` checkout is
+retained and reported instead of being deleted.
+
+If pending events exist, the user can delete them, keep all local state, or
+cancel. Local uninstall never publishes an event and does not delete data that
+was already sent to the inbox repository. Git, uv, and shared Git Credential
+Manager credentials are always retained. `-Force`, `-KeepState`, and
+`-RemoveModifiedRuntime` support deliberate scripted cleanup; `-Force` alone
+never authorizes deletion of a modified or unrecognized runtime.
 
 ## Nightly behavior and recovery
 
@@ -285,6 +319,9 @@ part of the unattended job.
   locks\aggregate.lock    maintainer aggregation only
   logs\manager.log
   logs\task.log
+  uninstall\
+    install.json           ownership metadata for safe runtime removal
+    uninstall.ps1          installed copy used by Windows Settings
 ```
 
 No mutable state belongs under `~/.agents`.
@@ -320,6 +357,7 @@ tools/validate_skill.py  maintainer/CI validation, not a fleet skill
 manage.py              runtime, event transport, and aggregation
 bootstrap.ps1          Windows installer and scheduled-task setup
 install.cmd            double-click wrapper for a configured Zip
+uninstall.ps1/.cmd      standalone per-user uninstall and double-click fallback
 fix-signin.cmd/.ps1    interactive GCM repair for both repositories
 metrics/               reviewed aggregates, checkpoints, fleet, rejections
 tests/                 unit and local bare-Git integration tests
