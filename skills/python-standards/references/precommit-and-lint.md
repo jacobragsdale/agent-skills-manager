@@ -33,20 +33,17 @@ select = [
 
 ## pyproject.toml — basedpyright
 
-Set `basic` mode explicitly for brownfield — basedpyright's DEFAULT is
-"recommended", which is stricter than pyright strict and will bury an
-untyped repo in thousands of findings. `basic` still catches undefined
-names, bad calls, and wrong argument types without demanding annotations
-everywhere. Once clean under `basic`, ratchet to `"standard"` in a
-dedicated commit; for going fully strict, use the `basedpyright-strict`
-skill.
+Use `recommended` mode explicitly so the checked-in configuration matches the
+team standard and does not depend on basedpyright's changing defaults. For a
+large brownfield diagnostic set, use a checked-in baseline as a temporary
+ratchet rather than silently changing the mode.
 
 ```toml
 [tool.basedpyright]
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
-typeCheckingMode = "basic"
+typeCheckingMode = "recommended"
 exclude = [".venv"]
 ```
 

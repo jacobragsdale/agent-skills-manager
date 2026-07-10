@@ -23,7 +23,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Skills repository authentication failed (Git exit $LASTEXITCODE)."
 }
 
-Write-Host 'Checking the event inbox repository...'
+Write-Host 'Checking the feedback inbox repository...'
 & git ls-remote --heads $config.inbox_repo_url | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Inbox repository authentication failed (Git exit $LASTEXITCODE)."

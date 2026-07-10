@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 import subprocess
 import tempfile
 import unittest
@@ -61,106 +60,106 @@ def seed_skill(runtime: Path, name: str = "demo-skill") -> None:
     git(runtime, "push", "origin", "main")
 
 
-class EventSchemaTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.machine_id = str(uuid.uuid4())
-        self.now = dt.datetime(2026, 7, 9, 12, 30, tzinfo=dt.timezone.utc)
+def learning(
+    config: manage.ManagerConfig,
+    runtime: Path,
+    message: str = "Use the safe mode for this operation.",
+) -> dict:
+    return manage.make_learning_event(
+        machine_id=config.machine_id,
+        skill_name="demo-skill",
+        skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
+        correction_category="instruction",
+        message=message,
+        now=dt.datetime(2026, 7, 9, 12, 30, tzinfo=dt.timezone.utc),
+    )
 
-    def test_invocation_event_round_trips(self) -> None:
-        event = manage.make_invocation_event(
-            machine_id=self.machine_id,
+
+class LearningSchemaTests(unittest.TestCase):
+    def test_learning_has_only_feedback_fields(self) -> None:
+        event = manage.make_learning_event(
+            machine_id=str(uuid.uuid4()),
             skill_name="demo-skill",
             skill_version="a" * 40,
-            surface_name="cursor",
-            surface_version="3.5.0",
-            now=self.now,
+            correction_category="instruction",
+            message="Prefer the documented flag.",
+            now=dt.datetime(2026, 7, 9, 12, 30, tzinfo=dt.timezone.utc),
         )
 
-        manage.validate_event(event)
+        manage.validate_learning(event)
 
-        self.assertEqual(event["schema_version"], 1)
-        self.assertEqual(event["outcome"], "unknown")
-        self.assertTrue(event["recorded_at"].endswith("Z"))
-        self.assertEqual(event["event_id"], event["invocation_id"])
+        self.assertEqual(
+            set(event),
+            {
+                "schema_version",
+                "event_id",
+                "recorded_at",
+                "machine_id",
+                "skill",
+                "category",
+                "message",
+            },
+        )
 
     def test_path_traversal_skill_is_rejected(self) -> None:
-        event = manage.make_invocation_event(
-            machine_id=self.machine_id,
+        event = manage.make_learning_event(
+            machine_id=str(uuid.uuid4()),
             skill_name="../../outside",
             skill_version="a" * 40,
-            surface_name="cursor",
-            surface_version=None,
-            now=self.now,
+            correction_category="instruction",
+            message="Prefer the documented flag.",
+            now=dt.datetime.now(dt.timezone.utc),
         )
 
-        with self.assertRaises(manage.EventValidationError):
-            manage.validate_event(event)
-
-    def test_correction_requires_a_category(self) -> None:
-        event = manage.make_outcome_event(
-            machine_id=self.machine_id,
-            invocation_id=str(uuid.uuid4()),
-            skill_name="demo-skill",
-            skill_version="a" * 40,
-            surface_name="cursor",
-            surface_version=None,
-            outcome="corrected",
-            correction_category=None,
-            now=self.now,
-        )
-
-        with self.assertRaises(manage.EventValidationError):
-            manage.validate_event(event)
+        with self.assertRaises(manage.FeedbackValidationError):
+            manage.validate_learning(event)
 
     def test_learning_message_must_be_one_line(self) -> None:
         event = manage.make_learning_event(
-            machine_id=self.machine_id,
-            invocation_id=str(uuid.uuid4()),
+            machine_id=str(uuid.uuid4()),
             skill_name="demo-skill",
             skill_version="a" * 40,
-            surface_name="cursor",
-            surface_version=None,
             correction_category="instruction",
             message="First line\n# injected heading",
-            now=self.now,
+            now=dt.datetime.now(dt.timezone.utc),
         )
 
-        with self.assertRaises(manage.EventValidationError):
-            manage.validate_event(event)
+        with self.assertRaises(manage.FeedbackValidationError):
+            manage.validate_learning(event)
 
 
-class EventStoreTests(unittest.TestCase):
-    def test_invalid_file_is_quarantined_and_not_deleted(self) -> None:
+class FeedbackStoreTests(unittest.TestCase):
+    def test_invalid_file_is_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = manage.StatePaths(Path(tmp))
             paths.ensure()
             bad = paths.pending / "bad.json"
             bad.write_text('{"schema_version": 1}', encoding="utf-8")
-            store = manage.EventStore(paths)
 
-            events = store.load_pending()
+            events = manage.FeedbackStore(paths).load_pending()
 
             self.assertEqual(events, [])
             self.assertFalse(bad.exists())
             self.assertTrue((paths.quarantine / "bad.json").is_file())
             self.assertTrue((paths.quarantine / "bad.reason.txt").is_file())
 
-    def test_event_is_written_atomically_and_marked_sent(self) -> None:
+    def test_learning_is_written_atomically_and_deleted_after_publication(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = manage.StatePaths(Path(tmp))
-            paths.ensure()
-            event = manage.make_heartbeat_event(
+            event = manage.make_learning_event(
                 machine_id=str(uuid.uuid4()),
-                runtime_version="b" * 40,
+                skill_name="demo-skill",
+                skill_version="b" * 40,
+                correction_category="instruction",
+                message="Prefer the documented flag.",
                 now=dt.datetime.now(dt.timezone.utc),
             )
-            store = manage.EventStore(paths)
+            store = manage.FeedbackStore(paths)
 
             path = store.write(event)
-            store.mark_sent(path)
+            store.mark_published(path)
 
             self.assertFalse(path.exists())
-            self.assertTrue((paths.sent / path.name).is_file())
             self.assertEqual(list(paths.pending.glob("*.tmp")), [])
 
 
@@ -178,15 +177,14 @@ class RuntimeSafetyTests(unittest.TestCase):
             git(updater, "commit", "-m", "update")
             git(updater, "push", "origin", "main")
             config = manage.ManagerConfig.new(
-                runtime_path=runtime,
-                runtime_repo_url=str(remote),
-                inbox_repo_url=str(init_bare_remote(root, "inbox")),
-                branch="main",
+                runtime,
+                str(remote),
+                str(init_bare_remote(root, "inbox")),
             )
 
             manage.sync_runtime(config)
 
-            self.assertEqual((runtime / "new.txt").read_text(encoding="utf-8"), "new\n")
+            self.assertEqual((runtime / "new.txt").read_text(), "new\n")
             self.assertEqual(git(runtime, "status", "--porcelain").stdout, "")
 
     def test_wrong_branch_is_never_reset_or_switched(self) -> None:
@@ -198,10 +196,9 @@ class RuntimeSafetyTests(unittest.TestCase):
             marker = runtime / "draft.txt"
             marker.write_text("keep me", encoding="utf-8")
             config = manage.ManagerConfig.new(
-                runtime_path=runtime,
-                runtime_repo_url=str(remote),
-                inbox_repo_url=str(init_bare_remote(root, "inbox")),
-                branch="main",
+                runtime,
+                str(remote),
+                str(init_bare_remote(root, "inbox")),
             )
 
             with self.assertRaises(manage.RuntimeSafetyError):
@@ -211,9 +208,9 @@ class RuntimeSafetyTests(unittest.TestCase):
                 git(runtime, "branch", "--show-current").stdout.strip(),
                 "work-in-progress",
             )
-            self.assertEqual(marker.read_text(encoding="utf-8"), "keep me")
+            self.assertEqual(marker.read_text(), "keep me")
 
-    def test_dirty_main_is_not_reset(self) -> None:
+    def test_dirty_runtime_is_not_reset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -221,20 +218,19 @@ class RuntimeSafetyTests(unittest.TestCase):
             marker = runtime / "README.md"
             marker.write_text("local edit\n", encoding="utf-8")
             config = manage.ManagerConfig.new(
-                runtime_path=runtime,
-                runtime_repo_url=str(remote),
-                inbox_repo_url=str(init_bare_remote(root, "inbox")),
-                branch="main",
+                runtime,
+                str(remote),
+                str(init_bare_remote(root, "inbox")),
             )
 
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.sync_runtime(config)
 
-            self.assertEqual(marker.read_text(encoding="utf-8"), "local edit\n")
+            self.assertEqual(marker.read_text(), "local edit\n")
 
 
-class InboxTransportTests(unittest.TestCase):
-    def test_two_clients_publish_concurrently_to_different_refs(self) -> None:
+class FeedbackTransportTests(unittest.TestCase):
+    def test_two_clients_publish_to_different_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -245,28 +241,16 @@ class InboxTransportTests(unittest.TestCase):
             for number in range(2):
                 runtime = clone_runtime(root, skills_remote, f"runtime-{number}")
                 paths = manage.StatePaths(root / f"state-{number}")
-                paths.ensure()
                 config = manage.ManagerConfig.new(
-                    runtime, str(skills_remote), str(inbox_remote), "main"
+                    runtime, str(skills_remote), str(inbox_remote)
                 )
-                config.save(paths)
-                manage.EventStore(paths).write(
-                    manage.make_heartbeat_event(
-                        machine_id=config.machine_id,
-                        runtime_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                        now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-                    )
-                )
+                manage.FeedbackStore(paths).write(learning(config, runtime))
                 jobs.append((config, paths))
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(
                     pool.map(
-                        lambda job: manage.publish_pending(
-                            job[0],
-                            job[1],
-                            now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-                        ),
+                        lambda job: manage.publish_pending(job[0], job[1]),
                         jobs,
                     )
                 )
@@ -276,11 +260,11 @@ class InboxTransportTests(unittest.TestCase):
                 inbox_remote,
                 "for-each-ref",
                 "--format=%(refname)",
-                "refs/heads/inbox/v1/",
+                "refs/heads/feedback/v1/",
             ).stdout.splitlines()
             self.assertEqual(len(refs), 2)
 
-    def test_publish_uses_machine_branch_and_preserves_main(self) -> None:
+    def test_publish_preserves_inbox_main_and_clears_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -288,32 +272,26 @@ class InboxTransportTests(unittest.TestCase):
             runtime = clone_runtime(root, skills_remote)
             seed_skill(runtime)
             paths = manage.StatePaths(root / "state")
-            paths.ensure()
-            config = manage.ManagerConfig.new(runtime, str(skills_remote), str(inbox_remote), "main")
-            config.save(paths)
-            store = manage.EventStore(paths)
-            store.write(
-                manage.make_invocation_event(
-                    machine_id=config.machine_id,
-                    skill_name="demo-skill",
-                    skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                    surface_name="cursor",
-                    surface_version=None,
-                    now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-                )
+            config = manage.ManagerConfig.new(
+                runtime, str(skills_remote), str(inbox_remote)
             )
-            main_before = git(inbox_remote, "rev-parse", "refs/heads/main").stdout.strip()
+            manage.FeedbackStore(paths).write(learning(config, runtime))
+            main_before = git(
+                inbox_remote, "rev-parse", "refs/heads/main"
+            ).stdout.strip()
 
-            published = manage.publish_pending(config, paths, now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc))
+            published = manage.publish_pending(config, paths)
 
-            branch = f"refs/heads/inbox/v1/{config.machine_id}/2026-07"
+            branch = f"refs/heads/feedback/v1/{config.machine_id}"
             self.assertEqual(published, 1)
-            self.assertEqual(git(inbox_remote, "rev-parse", "refs/heads/main").stdout.strip(), main_before)
+            self.assertEqual(
+                git(inbox_remote, "rev-parse", "refs/heads/main").stdout.strip(),
+                main_before,
+            )
             self.assertTrue(git(inbox_remote, "rev-parse", branch).stdout.strip())
             self.assertEqual(list(paths.pending.glob("*.json")), [])
-            self.assertEqual(len(list(paths.sent.glob("*.json"))), 1)
 
-    def test_failed_push_keeps_pending_events(self) -> None:
+    def test_failed_push_keeps_pending_learning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -321,19 +299,11 @@ class InboxTransportTests(unittest.TestCase):
             runtime = clone_runtime(root, skills_remote)
             seed_skill(runtime)
             paths = manage.StatePaths(root / "state")
-            paths.ensure()
-            config = manage.ManagerConfig.new(runtime, str(skills_remote), str(inbox_remote), "main")
-            config.save(paths)
-            store = manage.EventStore(paths)
-            store.write(
-                manage.make_heartbeat_event(
-                    machine_id=config.machine_id,
-                    runtime_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                    now=dt.datetime.now(dt.timezone.utc),
-                )
+            config = manage.ManagerConfig.new(
+                runtime, str(skills_remote), str(inbox_remote)
             )
-            config.inbox_repo_url = str(root / "missing.git")
-            config.save(paths)
+            manage.FeedbackStore(paths).write(learning(config, runtime))
+            inbox_remote.rename(root / "inbox-missing.git")
 
             with self.assertRaises(manage.ManagerError):
                 manage.publish_pending(config, paths)
@@ -341,8 +311,8 @@ class InboxTransportTests(unittest.TestCase):
             self.assertEqual(len(list(paths.pending.glob("*.json"))), 1)
 
 
-class AggregationTests(unittest.TestCase):
-    def test_processed_event_id_is_deduplicated_across_monthly_refs(self) -> None:
+class FeedbackAggregationTests(unittest.TestCase):
+    def test_aggregation_appends_once_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -351,46 +321,26 @@ class AggregationTests(unittest.TestCase):
             seed_skill(runtime)
             paths = manage.StatePaths(root / "state")
             config = manage.ManagerConfig.new(
-                runtime, str(skills_remote), str(inbox_remote), "main"
+                runtime, str(skills_remote), str(inbox_remote)
             )
-            event = manage.make_invocation_event(
-                machine_id=config.machine_id,
-                skill_name="demo-skill",
-                skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                surface_name="cursor",
-                surface_version=None,
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
+            manage.FeedbackStore(paths).write(learning(config, runtime))
+            manage.publish_pending(config, paths)
+
+            first = manage.aggregate_feedback(runtime, str(inbox_remote), paths)
+            learnings = runtime / "skills" / "demo-skill" / "LEARNINGS.md"
+            snapshot = learnings.read_text()
+            state = (runtime / "feedback" / "ingestion-state.json").read_text()
+            second = manage.aggregate_feedback(runtime, str(inbox_remote), paths)
+
+            self.assertEqual(first.accepted, 1)
+            self.assertEqual(second.accepted, 0)
+            self.assertEqual(learnings.read_text(), snapshot)
+            self.assertEqual(
+                (runtime / "feedback" / "ingestion-state.json").read_text(),
+                state,
             )
-            manage.EventStore(paths).write(event)
-            manage.publish_pending(
-                config,
-                paths,
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-            )
-            manage.aggregate_inbox(runtime, str(inbox_remote), paths)
-            history_path = runtime / "metrics" / "history.jsonl"
-            first_history = history_path.read_text(encoding="utf-8")
 
-            copier = clone_runtime(root, inbox_remote, "copier")
-            branch = f"inbox/v1/{config.machine_id}/2026-08"
-            git(copier, "checkout", "--orphan", branch)
-            git(copier, "rm", "-rf", "--ignore-unmatch", ".")
-            git(copier, "config", "user.name", "Tests")
-            git(copier, "config", "user.email", "tests@example.invalid")
-            target = copier / "events" / "2026-08" / f"{event['event_id']}.json"
-            target.parent.mkdir(parents=True)
-            target.write_text(json.dumps(event), encoding="utf-8")
-            git(copier, "add", "events")
-            git(copier, "commit", "-m", "copy old event")
-            git(copier, "push", "origin", f"HEAD:refs/heads/{branch}")
-
-            result = manage.aggregate_inbox(runtime, str(inbox_remote), paths)
-
-            self.assertEqual(result.accepted, 0)
-            self.assertEqual(result.advanced_refs, 1)
-            self.assertEqual(history_path.read_text(encoding="utf-8"), first_history)
-
-    def test_rewritten_inbox_branch_is_rejected_without_advancing(self) -> None:
+    def test_processed_event_is_not_reapplied_after_branch_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -399,58 +349,36 @@ class AggregationTests(unittest.TestCase):
             seed_skill(runtime)
             paths = manage.StatePaths(root / "state")
             config = manage.ManagerConfig.new(
-                runtime, str(skills_remote), str(inbox_remote), "main"
+                runtime, str(skills_remote), str(inbox_remote)
             )
-            manage.EventStore(paths).write(
-                manage.make_heartbeat_event(
-                    machine_id=config.machine_id,
-                    runtime_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                    now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-                )
-            )
-            manage.publish_pending(
-                config,
-                paths,
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-            )
-            manage.aggregate_inbox(runtime, str(inbox_remote), paths)
-            branch = f"inbox/v1/{config.machine_id}/2026-07"
-            state_path = runtime / "metrics" / "ingestion-state.json"
-            checkpoint = json.loads(state_path.read_text(encoding="utf-8"))[
-                "checkpoints"
-            ][branch]
+            event = learning(config, runtime)
+            manage.FeedbackStore(paths).write(event)
+            manage.publish_pending(config, paths)
+            manage.aggregate_feedback(runtime, str(inbox_remote), paths)
+            branch = manage.feedback_branch(config.machine_id)
+            learnings = runtime / "skills" / "demo-skill" / "LEARNINGS.md"
+            snapshot = learnings.read_text()
 
             attacker = clone_runtime(root, inbox_remote, "rewriter")
             git(attacker, "checkout", "--orphan", "replacement")
             git(attacker, "rm", "-rf", "--ignore-unmatch", ".")
             git(attacker, "config", "user.name", "Tests")
             git(attacker, "config", "user.email", "tests@example.invalid")
-            event = manage.make_heartbeat_event(
-                machine_id=config.machine_id,
-                runtime_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                now=dt.datetime(2026, 7, 10, tzinfo=dt.timezone.utc),
-            )
-            target = attacker / "events" / "2026-07" / f"{event['event_id']}.json"
+            event["message"] = "Changed text under an already processed event ID."
+            target = attacker / "learnings" / f"{event['event_id']}.json"
             target.parent.mkdir(parents=True)
             target.write_text(json.dumps(event), encoding="utf-8")
-            git(attacker, "add", "events")
+            git(attacker, "add", "learnings")
             git(attacker, "commit", "-m", "rewrite history")
             git(attacker, "push", "--force", "origin", f"HEAD:refs/heads/{branch}")
 
-            result = manage.aggregate_inbox(runtime, str(inbox_remote), paths)
+            result = manage.aggregate_feedback(runtime, str(inbox_remote), paths)
 
             self.assertEqual(result.accepted, 0)
-            self.assertEqual(result.advanced_refs, 0)
-            self.assertEqual(
-                json.loads(state_path.read_text(encoding="utf-8"))["checkpoints"][branch],
-                checkpoint,
-            )
-            self.assertIn(
-                "branch was rewritten",
-                (runtime / "metrics" / "REJECTED.md").read_text(encoding="utf-8"),
-            )
+            self.assertEqual(result.scanned_refs, 1)
+            self.assertEqual(learnings.read_text(), snapshot)
 
-    def test_malicious_remote_skill_name_is_rejected(self) -> None:
+    def test_malicious_skill_name_is_rejected_without_path_escape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -458,57 +386,47 @@ class AggregationTests(unittest.TestCase):
             runtime = clone_runtime(root, skills_remote)
             seed_skill(runtime)
             machine_id = str(uuid.uuid4())
-            event = manage.make_invocation_event(
+            config = manage.ManagerConfig.new(
+                runtime,
+                str(skills_remote),
+                str(inbox_remote),
                 machine_id=machine_id,
-                skill_name="demo-skill",
-                skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                surface_name="cursor",
-                surface_version=None,
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
             )
+            paths = manage.StatePaths(root / "state")
+            event = learning(config, runtime)
             event["skill"]["name"] = "../../outside"
             attacker = clone_runtime(root, inbox_remote, "attacker")
-            branch = f"inbox/v1/{machine_id}/2026-07"
+            branch = manage.feedback_branch(machine_id)
             git(attacker, "checkout", "--orphan", branch)
             git(attacker, "rm", "-rf", "--ignore-unmatch", ".")
-            target = attacker / "events" / "2026-07" / f"{event['event_id']}.json"
+            target = attacker / "learnings" / f"{event['event_id']}.json"
             target.parent.mkdir(parents=True)
             target.write_text(json.dumps(event), encoding="utf-8")
             git(attacker, "config", "user.name", "Tests")
             git(attacker, "config", "user.email", "tests@example.invalid")
-            git(attacker, "add", "events")
-            git(attacker, "commit", "-m", "malicious event")
+            git(attacker, "add", "learnings")
+            git(attacker, "commit", "-m", "malicious feedback")
             git(attacker, "push", "origin", f"HEAD:refs/heads/{branch}")
-            paths = manage.StatePaths(root / "state")
 
-            result = manage.aggregate_inbox(runtime, str(inbox_remote), paths)
+            result = manage.aggregate_feedback(runtime, str(inbox_remote), paths)
 
             self.assertEqual(result.accepted, 0)
-            self.assertEqual(result.rejected, 1)
             self.assertFalse((root / "outside" / "LEARNINGS.md").exists())
-            self.assertIn(
-                "unsafe skill name",
-                (runtime / "metrics" / "REJECTED.md").read_text(encoding="utf-8"),
-            )
-            self.assertNotIn(
-                "outside",
-                (runtime / "metrics" / "REJECTED.md").read_text(encoding="utf-8"),
-            )
+            rejection = (runtime / "feedback" / "REJECTED.md").read_text()
+            self.assertIn("unsafe skill name", rejection)
+            self.assertNotIn("outside", rejection)
 
     def test_learning_append_deduplicates_date_and_category_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skill = root / "skills" / "demo-skill"
             skill.mkdir(parents=True)
-            learnings = skill / "LEARNINGS.md"
-            learnings.write_text("# Learnings\n", encoding="utf-8")
+            target = skill / "LEARNINGS.md"
+            target.write_text("# Learnings\n", encoding="utf-8")
             event = manage.make_learning_event(
                 machine_id=str(uuid.uuid4()),
-                invocation_id=str(uuid.uuid4()),
                 skill_name="demo-skill",
                 skill_version="a" * 40,
-                surface_name="cursor",
-                surface_version=None,
                 correction_category="instruction",
                 message="Use the safe mode for this operation.",
                 now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
@@ -518,80 +436,13 @@ class AggregationTests(unittest.TestCase):
             event["recorded_at"] = "2026-07-10T00:00:00Z"
             self.assertFalse(manage._append_learning(root, event))
             self.assertEqual(
-                learnings.read_text(encoding="utf-8").count(
-                    "Use the safe mode for this operation."
-                ),
+                target.read_text().count("Use the safe mode for this operation."),
                 1,
             )
 
-    def test_aggregation_is_idempotent_and_rejects_unsafe_skill_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            skills_remote = init_bare_remote(root, "skills")
-            inbox_remote = init_bare_remote(root, "inbox")
-            runtime = clone_runtime(root, skills_remote)
-            seed_skill(runtime)
-            paths = manage.StatePaths(root / "state")
-            paths.ensure()
-            config = manage.ManagerConfig.new(runtime, str(skills_remote), str(inbox_remote), "main")
-            config.save(paths)
-            store = manage.EventStore(paths)
-            invocation = manage.make_invocation_event(
-                machine_id=config.machine_id,
-                skill_name="demo-skill",
-                skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                surface_name="cursor",
-                surface_version="3.5.0",
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-            )
-            store.write(invocation)
-            store.write(
-                manage.make_learning_event(
-                    machine_id=config.machine_id,
-                    invocation_id=invocation["invocation_id"],
-                    skill_name="demo-skill",
-                    skill_version=invocation["skill"]["version"],
-                    surface_name="cursor",
-                    surface_version="3.5.0",
-                    correction_category="instruction",
-                    message="The command needs --safe in this environment.",
-                    now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-                )
-            )
-            manage.publish_pending(config, paths, now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc))
 
-            first = manage.aggregate_inbox(runtime, str(inbox_remote), paths)
-            snapshot = {
-                p.relative_to(runtime).as_posix(): p.read_text(encoding="utf-8")
-                for p in [
-                    runtime / "metrics" / "history.jsonl",
-                    runtime / "metrics" / "DASHBOARD.md",
-                    runtime / "metrics" / "ingestion-state.json",
-                    runtime / "skills" / "demo-skill" / "LEARNINGS.md",
-                ]
-            }
-            second = manage.aggregate_inbox(runtime, str(inbox_remote), paths)
-
-            self.assertEqual(first.accepted, 2)
-            self.assertEqual(second.accepted, 0)
-            for relative, content in snapshot.items():
-                self.assertEqual((runtime / relative).read_text(encoding="utf-8"), content)
-            self.assertFalse((root / "outside" / "LEARNINGS.md").exists())
-
-
-class RemovedAuthoringTests(unittest.TestCase):
-    def test_cli_has_no_proposal_or_request_commands(self) -> None:
-        parser = manage.build_parser()
-        help_text = parser.format_help()
-        self.assertNotIn("sweep-proposals", help_text)
-        self.assertNotIn("propose", help_text)
-        self.assertNotIn("request", help_text)
-
-
-class OperationalPrimitiveTests(unittest.TestCase):
-    def test_nightly_publishes_pending_event_but_no_heartbeat_when_sync_is_unsafe(
-        self,
-    ) -> None:
+class OperationalTests(unittest.TestCase):
+    def test_nightly_publishes_feedback_even_when_sync_is_unsafe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             skills_remote = init_bare_remote(root, "skills")
@@ -600,29 +451,20 @@ class OperationalPrimitiveTests(unittest.TestCase):
             seed_skill(runtime)
             paths = manage.StatePaths(root / "state")
             config = manage.ManagerConfig.new(
-                runtime, str(skills_remote), str(inbox_remote), "main"
+                runtime, str(skills_remote), str(inbox_remote)
             )
             config.save(paths)
-            invocation = manage.make_invocation_event(
-                machine_id=config.machine_id,
-                skill_name="demo-skill",
-                skill_version=git(runtime, "rev-parse", "HEAD").stdout.strip(),
-                surface_name="cursor",
-                surface_version=None,
-                now=dt.datetime(2026, 7, 9, tzinfo=dt.timezone.utc),
-            )
-            manage.EventStore(paths).write(invocation)
+            manage.FeedbackStore(paths).write(learning(config, runtime))
             (runtime / "dirty.txt").write_text("keep\n", encoding="utf-8")
             args = type("Args", (), {"state_dir": str(paths.root)})()
 
             with self.assertRaises(manage.ManagerError):
                 manage.nightly_command(args)
 
-            sent = [json.loads(path.read_text(encoding="utf-8")) for path in paths.sent.glob("*.json")]
-            self.assertEqual([event["event_type"] for event in sent], ["skill_invocation"])
-            self.assertEqual((runtime / "dirty.txt").read_text(encoding="utf-8"), "keep\n")
+            self.assertEqual(list(paths.pending.glob("*.json")), [])
+            self.assertEqual((runtime / "dirty.txt").read_text(), "keep\n")
 
-    def test_maintainer_aggregation_requires_clean_review_branch(self) -> None:
+    def test_aggregation_requires_clean_review_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -631,7 +473,7 @@ class OperationalPrimitiveTests(unittest.TestCase):
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.validate_maintainer_checkout(checkout)
 
-            git(checkout, "switch", "-c", "telemetry/review")
+            git(checkout, "switch", "-c", "feedback/review")
             (checkout / "draft.txt").write_text("draft\n", encoding="utf-8")
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.validate_maintainer_checkout(checkout)

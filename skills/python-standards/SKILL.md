@@ -1,6 +1,6 @@
 ---
 name: python-standards
-description: "Apply the team's Python standards to a repo: uv with a single pyproject.toml, ruff + basedpyright pre-commit hooks, and type checking in basedpyright recommended mode. Use when setting up or standardizing a Python repo, onboarding brownfield code, migrating off requirements.txt/setup.py, fixing uv sync failures, adding pre-commit or type checking, or fixing type errors — even if the user just says 'set up this Python repo' or 'add type checking'. Do NOT use for writing tests or repo agent instructions (use agents-md)."
+description: "Apply the team's complete Python project standard: uv with one pyproject.toml, ruff + basedpyright pre-commit hooks, and basedpyright recommended mode. Use when setting up a Python repo, onboarding a brownfield project, or explicitly standardizing its packaging and tooling. Do NOT use for an isolated dependency, lint, or type error; writing tests; or repo agent instructions."
 metadata:
   author: jacob
 ---
@@ -11,15 +11,7 @@ Bring any Python repo — usually brownfield internal code — to the house
 standard: uv-managed, one `pyproject.toml`, ruff + basedpyright enforced by
 pre-commit, zero custom setup steps.
 
-Before any other work, read `LEARNINGS.md` next to this file, then record the
-invocation in PowerShell and retain the printed UUID:
-
-```powershell
-$skillInvocation = uv run "$HOME\.agents\manage.py" record-start --skill python-standards --surface cursor
-```
-
-Telemetry failure must not block the user's task; continue and report the
-failure at handoff.
+Before any other work, read `LEARNINGS.md` next to this file.
 
 ## Target state (definition of done)
 
@@ -70,8 +62,9 @@ Run until clean, fixing ONE error at a time: `uv sync` → on failure READ
 fix in `pyproject.toml` (or `.env.example` for env-var fixes) → repeat.
 If you solve an error NOT in the playbook, retain it as an `environment` or
 `tool-drift` learning for maintainer review — that is how this skill learns
-without mutating the runtime. Verify from zero: `rm -rf .venv && uv sync && uv run python -c
-"import <top_level_package>"`.
+without mutating the runtime. Verify from zero: remove `.venv` with the
+platform-appropriate filesystem command, then run `uv sync` and
+`uv run python -c "import <top_level_package>"`.
 
 ### 4. Pre-commit: ruff + basedpyright
 
@@ -90,10 +83,9 @@ hotspots.
 
 ### 5. Type checking
 
-RUN `scripts/setup_config.py` in the repo root to write
-`[tool.basedpyright]` with `typeCheckingMode = "recommended"` (exit 2 means
-config exists elsewhere — a stray `pyrightconfig.json` silently overrides
-pyproject; reconcile into one place). Then:
+Use the `[tool.basedpyright]` configuration from step 4. A stray
+`pyrightconfig.json` silently overrides pyproject; reconcile existing settings
+into one place before running:
 
 ```bash
 uv run <skill>/scripts/triage.py --project <repo> --json /tmp/tri-0.json
@@ -113,8 +105,8 @@ fixing. Fix in this order, one commit per batch, re-running `triage.py
 3. **Everything else** by rule, highest count first. For rules or baseline
    mechanics not covered here, READ `references/rules.md`.
 
-Before finishing, RUN `scripts/audit_diff.py` — it flags behavior-smelling
-added lines (asserts, guards, bare ignores, uncommented casts).
+Before finishing, inspect the complete diff for runtime behavior changes and
+re-run the repository's existing tests.
 
 ### 6. Env and entry points
 
@@ -129,28 +121,20 @@ env-fiddling get deleted. List them in a README "Running" table.
 ## Bundled resources
 
 - `scripts/audit_repo.py` — RUN first on any brownfield repo.
-- `scripts/setup_config.py` — RUN once to write `[tool.basedpyright]`.
 - `scripts/triage.py` — RUN for every type check; never bare basedpyright.
-- `scripts/audit_diff.py` — RUN before finishing type fixes.
 - `references/troubleshooting.md` — READ at the first `uv sync` failure; record newly solved errors as learnings for maintainer review.
 - `references/precommit-and-lint.md` — READ in step 4; copy templates.
 - `references/rules.md` — READ for uncovered diagnostic rules and baseline mechanics.
 
-## Record the outcome
+## Record a factual correction
 
-Before the final response, record `ok`, `failed`, or `abandoned`:
-
-```powershell
-uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill python-standards --surface cursor --outcome ok
-```
-
-For a correction or new `uv sync` fix, record the closest category and one
-factual lesson; a maintainer decides whether it belongs in the playbook:
+For a user correction or a new `uv sync` fix, queue the closest category and
+one factual lesson; a maintainer decides whether it belongs in the playbook:
 
 ```powershell
-uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill python-standards --surface cursor --outcome corrected --category tool-drift
-uv run "$HOME\.agents\manage.py" record-learning --invocation-id $skillInvocation --skill python-standards --surface cursor --category tool-drift --message "<what failed and what to do instead>"
+& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" record-learning --skill python-standards --category tool-drift --message "<what failed and what to do instead>"
 ```
 
 Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
-Do not edit the runtime; the collector places the lesson in a reviewed PR.
+Feedback failure must not block the task. Do not edit the runtime; a maintainer
+folds queued lessons into a reviewed pull request.

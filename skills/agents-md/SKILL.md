@@ -11,14 +11,7 @@ Produce a repo-scoped AGENTS.md with verified commands, non-inferable rules,
 and hard boundaries. The evidence is in `references/research-notes.md`; read it
 when the user questions a rule.
 
-Before any other work, read `LEARNINGS.md` next to this file, then record the
-invocation in PowerShell and retain the printed UUID:
-
-```powershell
-$skillInvocation = uv run "$HOME\.agents\manage.py" record-start --skill agents-md --surface cursor
-```
-
-Telemetry failure must not block the task; continue and report it at handoff.
+Before any other work, read `LEARNINGS.md` next to this file.
 
 ## Non-negotiables
 
@@ -136,20 +129,15 @@ file — comments are stripped before models see it):
 - `references/research-notes.md` — READ when a house rule is questioned;
   every claim above, with sources.
 
-## Record the outcome
+## Record a factual correction
 
-Before the final response, record `ok`, `failed`, or `abandoned`:
-
-```powershell
-uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill agents-md --surface cursor --outcome ok
-```
-
-For a correction, record the closest category and one factual lesson:
+If the user corrected this skill's instructions or trigger behavior, queue one
+short factual lesson for maintainer review:
 
 ```powershell
-uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill agents-md --surface cursor --outcome corrected --category instruction
-uv run "$HOME\.agents\manage.py" record-learning --invocation-id $skillInvocation --skill agents-md --surface cursor --category instruction --message "<what failed and what to do instead>"
+& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" record-learning --skill agents-md --category instruction --message "<what failed and what to do instead>"
 ```
 
 Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
-Do not edit the runtime; the collector places the lesson in a reviewed PR.
+Feedback failure must not block the task. Do not edit the runtime; a maintainer
+folds queued lessons into a reviewed pull request.

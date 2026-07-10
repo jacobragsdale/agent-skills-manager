@@ -103,7 +103,6 @@ def main() -> int:
     parser.add_argument("--diff", type=Path, metavar="OLD", help="compare against a previous --json snapshot")
     parser.add_argument("--errors-only", action="store_true",
                         help="triage only errors; use only for explicit error-only adoption")
-    parser.add_argument("--include-warnings", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     data = run_basedpyright(args.paths, args.project)

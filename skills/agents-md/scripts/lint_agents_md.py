@@ -20,7 +20,7 @@ import re
 import sys
 from pathlib import Path
 
-SOFT_LINES, HARD_LINES = 150, 300
+SOFT_LINES, HARD_LINES = 150, 200
 
 VAGUE = [
     "write clean code", "best practices", "high quality", "high-quality",

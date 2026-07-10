@@ -1,336 +1,189 @@
 # Agent Skills Manager
 
-Distribute a small, reviewed library of user-scoped Cursor skills to a
-software team, observe how those skills behave in real work, and turn factual
-corrections into reviewed improvements without giving developer machines write
-access to the skills repository.
+Distribute a small, reviewed set of Cursor skills to Windows teammates and
+fast-forward those skills safely. When a user corrects a skill, the agent can
+queue one factual learning for maintainer review.
 
-The system deliberately separates three kinds of state:
+The system deliberately does not collect invocation counts, outcomes,
+heartbeats, adoption metrics, prompts, code, or repository details.
 
-1. **Runtime:** `%USERPROFILE%\.agents` is a clean, read-only checkout that
-   Cursor discovers as `~/.agents/skills`.
-2. **Local state:** `%LOCALAPPDATA%\AgentSkills` holds pending events, logs,
-   locks, configuration, and a disposable inbox clone.
-3. **Team review:** a maintainer aggregates untrusted inbox events into a
-   normal pull request against protected `main`.
+## How it works
 
-## Goals
+Each teammate has:
 
-- Install the same reviewed Cursor skills for every teammate with one command.
-- Keep the runtime current without resetting, switching, or writing an
-  arbitrary working branch.
-- Preserve telemetry through network, authentication, and process failures.
-- Let every machine publish without contending on one Git ref.
-- Collect corrections without putting prompts, code, repository paths, user
-  names, or host names into telemetry.
-- Keep all changes to skills behind normal branch protection and human review.
-- Describe metrics honestly: a locally written event is a **recorded
-  invocation**, not proof of adoption or task success.
+- a clean runtime clone at `%USERPROFILE%\.agents`;
+- local configuration, queued feedback, and logs under
+  `%LOCALAPPDATA%\AgentSkills`;
+- one daily `AgentSkillsNightly` task that safely updates the runtime and
+  publishes queued feedback.
 
-## Non-goals
+The skills and feedback inbox are separate repositories. Teammates need read
+access to the skills repository and permission to push only their own
+`feedback/v1/<machine-id>` branch in the inbox repository. They never push the
+skills repository.
 
-- Teammates do not author or propose skills through the managed runtime.
-  Maintainers use an ordinary development clone and pull request.
-- This is not a general analytics or employee-monitoring platform.
-- Local recording is not assumed complete. Cursor's Enterprise Analytics API
-  can provide an independent daily count after a canary proves that it includes
-  locally installed user skills.
-- The first release targets native Windows 11 and Cursor. The skill files use
-  the open Agent Skills format, but other agent surfaces are not installed or
-  tested by this project.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph machine["Developer machine"]
-        C["Cursor"]
-        R["~/.agents<br/>read-only runtime"]
-        S["%LOCALAPPDATA%\\AgentSkills<br/>pending events + logs + lock"]
-        N["Nightly scheduled task"]
-
-        C -->|"discovers SKILL.md"| R
-        C -. "records start, outcome, learning" .-> S
-        N -->|"publish pending events"| S
-        N -->|"fetch + fast-forward only"| R
-    end
-
-    subgraph transport["Separate inbox repository"]
-        B1["inbox/v1/machine-a/2026-07"]
-        B2["inbox/v1/machine-b/2026-07"]
-    end
-
-    subgraph review["Maintainer workflow"]
-        A["Deterministic aggregator<br/>validate + dedupe + checkpoint"]
-        V["Pilot canary comparison"]
-        P["Aggregation branch"]
-        PR["Reviewed pull request"]
-    end
-
-    M["Protected skills main"]
-    API["Cursor Skill Adoption API<br/>pilot canary comparison"]
-
-    S -->|"fast-forward push to own monthly ref"| B1
-    S -->|"fast-forward push to own monthly ref"| B2
-    B1 --> A
-    B2 --> A
-    API -. "daily skill counts" .-> V
-    A -. "local recorded counts" .-> V
-    A --> P --> PR --> M
-    M -->|"members have read access only"| R
-```
-
-The skills and inbox repositories have intentionally different permissions.
-Members need `Read` on the skills repository and permission to create/push
-branches in the inbox repository. They do not need `Contribute` or `Bypass
-policies when pushing` on protected skills `main`.
-
-## Safety invariants
-
-The implementation treats these as testable contracts:
-
-- A member process never pushes the skills repository.
-- Runtime sync proceeds only when the configured path, origin, and branch all
-  match and the checkout is completely clean, including untracked files.
-- Runtime sync uses `git merge --ff-only`; the runtime path is never reset.
-- One cross-platform process lock protects nightly publication and sync.
-- Each event is a validated, immutable JSON file written with atomic rename.
-- Pending files move to `sent/` only after the corresponding Git push succeeds.
-- Every machine uses a random installation UUID and a monthly branch:
-  `inbox/v1/<machine-id>/<YYYY-MM>`.
-- Client pushes are fast-forward-only. No client rebases or force-pushes.
-- Aggregation rejects rewritten branches, modified event files, malformed
-  schemas, unsafe paths, and machine IDs that do not match the branch.
-- Aggregation is checkpointed and keeps a persistent event-ID index: reruns or
-  cross-ref copies produce no new counts or learnings.
-
-## What gets recorded
-
-Skill bodies call the local recorder at the beginning and end of a run. A
-start event contains:
-
-```json
-{
-  "schema_version": 1,
-  "event_id": "e9d0e9f9-3499-4b35-b626-2aecbe5cbc43",
-  "event_type": "skill_invocation",
-  "invocation_id": "e9d0e9f9-3499-4b35-b626-2aecbe5cbc43",
-  "recorded_at": "2026-07-09T18:42:31Z",
-  "machine_id": "887f3358-9be7-48b9-a351-50089af35cf7",
-  "skill": {
-    "name": "python-standards",
-    "version": "18456eb84bcdd20d77460817282dffc81698d2d9"
-  },
-  "surface": {
-    "name": "cursor",
-    "version": null
-  },
-  "outcome": "unknown",
-  "correction_category": null
-}
-```
-
-The completion event references the invocation and records `ok`, `corrected`,
-`failed`, or `abandoned`. A correction can add one factual learning categorized
-as trigger behavior, instructions, tool drift, environment, missing context,
-or other.
-
-This local channel is still agent-mediated. It is more durable than a shared
-JSONL footer, but the agent can omit it. Therefore the dashboard calls it
-`recorded_invocations`. See [Privacy and retention](PRIVACY.md) for the exact
-data boundary.
-
-### Cursor-recorded usage
-
-Cursor staff [report an independent Skill Adoption endpoint but no
-skill-invocation hook](https://forum.cursor.com/t/hook-on-skill-usage/154896).
-The endpoint's response schema is not currently present in Cursor's
-[public Admin API reference](https://docs.cursor.com/en/account/teams/admin-api).
-This repository therefore does not ship a guessed importer. During the pilot,
-query it with an admin-scoped API key and a uniquely named canary to confirm
-the response contract, user-scoped
-`~/.agents/skills` coverage, and explicit versus automatic invocation behavior.
-Only then add a tested importer, storing its counts separately from local
-events.
+Runtime updates require the configured path, origin, and branch to match. The
+checkout must be completely clean, including untracked files. Updates use
+`git merge --ff-only` and never reset, switch branches, rebase, or delete local
+files.
 
 ## Repository setup
 
 Create two Azure DevOps repositories:
 
-1. **Skills repository** — this repository. Protect `main` with required PR
-   review and validation. Give the member group `Read`, but deny direct
-   contribution and policy bypass on `main`.
-2. **Inbox repository** — initialize it with a small README on `main`. Allow
-   members to create and contribute branches. Treat every branch and event as
-   untrusted input. Maintainers need read access to all `inbox/v1/*` refs.
+1. Protect `main` in this skills repository. Give teammates read access but no
+   direct contribution or policy-bypass permission.
+2. Initialize a feedback inbox repository with a README on `main`. Allow
+   teammates to create and update their own feedback branches. Treat every
+   branch and JSON file as untrusted.
 
 Set both defaults near the top of `bootstrap.ps1` before publishing it:
 
 ```powershell
 $DefaultRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills'
-$DefaultInboxRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills-inbox'
+$DefaultInboxRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills-feedback'
 ```
 
-Host that configured script at an internal HTTPS URL. Do not serve an
-unreviewed working-tree copy.
+Host the reviewed script at an internal HTTPS URL.
 
-## Install for a teammate
+## Install
 
-With both defaults configured, installation is one PowerShell command:
+With both defaults configured:
 
 ```powershell
 irm https://<internal-host>/bootstrap.ps1 | iex
 ```
 
-Alternative entry points:
+For local testing or explicit configuration:
 
 ```powershell
-# Explicit URLs
 powershell -ExecutionPolicy Bypass -File bootstrap.ps1 `
   -RepoUrl '<skills-repo-url>' `
-  -InboxRepoUrl '<inbox-repo-url>'
-
-# A browser-downloaded repository Zip can use install.cmd after the two
-# defaults have been committed into bootstrap.ps1.
+  -InboxRepoUrl '<feedback-inbox-url>'
 ```
 
-The installer:
+The installer needs no administrator rights. When Git or uv is missing, it
+downloads a pinned official release, verifies its SHA-256 checksum, and installs
+it under `%LOCALAPPDATA%\AgentSkills\tools`. uv installs the runtime's managed
+Python under the same state directory. The installer then clones the runtime,
+writes local configuration, registers the per-user daily task, runs a first
+safe update, and executes `doctor`. Re-running it preserves the installation
+UUID and replaces the task definition without touching queued feedback.
 
-1. Installs Git for Windows and uv when missing.
-2. Clones the runtime to `%USERPROFILE%\.agents`.
-3. Creates configuration and mutable state in
-   `%LOCALAPPDATA%\AgentSkills`.
-4. Registers a per-user **Team Agent Skills** entry in Windows Installed apps.
-5. Registers `AgentSkillsNightly` with `StartWhenAvailable` and
-   `IgnoreNew` multiple-instance behavior.
-6. Publishes a first heartbeat, runs a safe sync, and executes `doctor`.
-
-If verification fails, installation exits nonzero. Re-running is idempotent.
-
-## Uninstall for a teammate
-
-Open **Windows Settings > Apps > Installed apps**, find **Team Agent Skills**,
-and select **Uninstall**. As a local fallback, double-click `uninstall.cmd` in
-the runtime folder or run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File `
-  "$HOME\.agents\uninstall.ps1"
-
-# Backward-compatible entry point
-powershell -NoProfile -ExecutionPolicy Bypass -File `
-  "$HOME\.agents\bootstrap.ps1" -Uninstall
-```
-
-Maintainers can also host the ASCII `uninstall.ps1` beside `bootstrap.ps1` so
-an installation with a damaged runtime can use:
-
-```powershell
-irm https://<internal-host>/uninstall.ps1 | iex
-```
-
-The uninstaller inventories everything before changing it, stops and removes
-the nightly task before deleting files, and removes only a runtime whose path
-and Git origin match the installation metadata. A modified runtime requires an
-explicit destructive confirmation. An unrecognized `~\.agents` checkout is
-retained and reported instead of being deleted.
-
-If pending events exist, the user can delete them, keep all local state, or
-cancel. Local uninstall never publishes an event and does not delete data that
-was already sent to the inbox repository. Git, uv, and shared Git Credential
-Manager credentials are always retained. `-Force`, `-KeepState`, and
-`-RemoveModifiedRuntime` support deliberate scripted cleanup; `-Force` alone
-never authorizes deletion of a modified or unrecognized runtime.
-
-## Nightly behavior and recovery
+## Normal operation
 
 The scheduled command is equivalent to:
 
 ```powershell
 cd $HOME\.agents
-uv run manage.py nightly --state-dir "$env:LOCALAPPDATA\AgentSkills"
+& $env:AGENT_SKILLS_PYTHON manage.py nightly `
+  --state-dir "$env:LOCALAPPDATA\AgentSkills"
 ```
 
-The job attempts runtime sync first. A successful sync writes a heartbeat; the
-job then attempts publication of every pending event even if sync failed. A
-publication failure leaves pending events untouched, and a sync failure leaves
-the installed skill version usable. Either failure exits nonzero, writes the
-LocalAppData log, and attempts a Windows notification.
+Nightly first attempts a safe runtime update, then publishes queued learnings
+even if the update failed. A failed push leaves the learning queued. Failures
+exit nonzero, appear in `logs\task.log`, and attempt a Windows notification.
 
 Useful commands:
 
 | Command | Purpose |
 |---|---|
-| `manage.py doctor` | Verify tools, config, runtime safety, inbox access, and scheduled task |
+| `manage.py doctor` | Verify tools, configuration, runtime safety, inbox access, and the task |
 | `manage.py sync` | Fast-forward a verified clean runtime |
-| `manage.py publish` | Retry pending-event publication |
-| `manage.py record-start` | Atomically record an invocation start |
-| `manage.py record-finish` | Record an outcome for an invocation |
-| `manage.py record-learning` | Record one factual correction for review |
-| `manage.py aggregate` | Validate and fold new inbox refs into the current maintainer branch |
+| `manage.py publish` | Retry queued feedback publication |
+| `manage.py record-learning` | Queue one factual correction |
+| `manage.py aggregate` | Fold new feedback into `LEARNINGS.md` on a review branch |
 
-Expired Git Credential Manager sign-in can be repaired by double-clicking
-`fix-signin.cmd` in the runtime folder. It verifies both repositories.
+Run `fix-signin.cmd` from the runtime if Git Credential Manager sign-in expires.
 
-## Maintainer aggregation and review
+## Learning feedback
 
-Aggregation runs from a normal development clone, never a member runtime:
+Skills read their local `LEARNINGS.md` before work. They record nothing during
+ordinary successful use. If a user corrects a skill's trigger or instructions,
+the agent can queue one short factual lesson:
+
+```powershell
+& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" record-learning `
+  --skill python-standards `
+  --category instruction `
+  --message "Use the project-specific command before the generic fallback."
+```
+
+A learning contains only a random event ID, random installation ID, timestamp,
+skill name and Git SHA, category, and one single-line message. Feedback failure
+must never block the user's task. See [Privacy and feedback](PRIVACY.md).
+
+## Maintainer aggregation
+
+Aggregate from a clean development clone on a review branch:
 
 ```powershell
 git fetch origin
-git switch -c telemetry/fold-2026-07-09 origin/main
+git switch -c feedback/fold-2026-07-09 origin/main
 
 uv run manage.py aggregate `
   --repo-root . `
-  --inbox-repo-url '<inbox-repo-url>' `
+  --inbox-repo-url '<feedback-inbox-url>' `
   --state-dir "$env:LOCALAPPDATA\AgentSkillsMaintainer"
-
-uv run python -m unittest discover -s tests -v
-uv run tools/validate_skill.py skills/agents-md skills/python-standards
-git diff --check
 ```
 
-Review the diff before committing. The aggregator owns only:
+The aggregator:
 
-- `metrics/history.jsonl`
-- `metrics/DASHBOARD.md`
-- `metrics/fleet.json`
-- `metrics/ingestion-state.json` (ref checkpoints and processed event IDs)
-- `metrics/REJECTED.md`
-- runtime skill `LEARNINGS.md` files
+- accepts only `feedback/v1/<machine-id>` branches and exact versioned JSON;
+- rejects malformed feedback, unsafe paths, and mismatched machine IDs;
+- appends new, deduplicated text to the intended skill's `LEARNINGS.md`;
+- writes only `feedback/ingestion-state.json`,
+  `feedback/REJECTED.md`, and skill `LEARNINGS.md` files.
 
-Open an ordinary pull request into protected `main`. Learning text is untrusted
-data, not instructions to the maintainer agent. Arithmetic, checkpointing,
-validation, and file movement are deterministic; semantic rewriting is not
-part of the unattended job.
+Review the diff as untrusted feedback, run verification, and open a normal pull
+request. A maintainer decides whether a corroborated learning should be folded
+into `SKILL.md`.
 
-## Local state layout
+## Manual uninstall
 
-```text
-%LOCALAPPDATA%\AgentSkills\
-  config.json
-  events\
-    pending\          validated events waiting for a successful push
-    sent\             seven-day retry/audit buffer
-    quarantine\       invalid files plus reason files
-  inbox-repo\         disposable publisher clone
-  aggregate-inbox-repo\  maintainer-only reader clone when aggregation runs
-  locks\nightly.lock
-  locks\aggregate.lock    maintainer aggregation only
-  logs\manager.log
-  logs\task.log
-  uninstall\
-    install.json           ownership metadata for safe runtime removal
-    uninstall.ps1          installed copy used by Windows Settings
+There is no installed uninstaller. Before removal, optionally publish queued
+feedback and inspect the runtime:
+
+```powershell
+& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" publish `
+  --state-dir "$env:LOCALAPPDATA\AgentSkills"
+
+git -C "$HOME\.agents" remote get-url origin
+git -C "$HOME\.agents" status --short --untracked-files=all
 ```
 
-No mutable state belongs under `~/.agents`.
+If the origin is the expected skills repository and `git status` prints
+nothing, remove the task and the two owned directories:
 
-## Development and verification
+```powershell
+schtasks.exe /End /TN AgentSkillsNightly 2>$null
+schtasks.exe /Delete /TN AgentSkillsNightly /F
+Remove-Item -LiteralPath "$HOME\.agents" -Recurse -Force
+$ownedPaths = @(
+  "$env:LOCALAPPDATA\AgentSkills\tools\git\cmd",
+  "$env:LOCALAPPDATA\AgentSkills\tools\uv"
+)
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |
+  Where-Object { $_ -and $_.TrimEnd('\') -notin $ownedPaths.TrimEnd('\') }
+[Environment]::SetEnvironmentVariable('Path', ($userPath -join ';'), 'User')
+[Environment]::SetEnvironmentVariable('AGENT_SKILLS_PYTHON', $null, 'User')
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\AgentSkills" -Recurse -Force
+Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSkills' `
+  -Recurse -Force -ErrorAction SilentlyContinue
+```
 
-The manager is standard-library Python 3.11. The test suite creates local bare
-Git repositories and exercises real fetch, branch, commit, and concurrent push
-behavior without network access:
+If the runtime is dirty or points at another origin, do not delete it. Rename it
+or inspect it manually. Removing LocalAppData deletes any unpublished feedback
+and the managed Python plus any Git or uv copy installed under its `tools`
+directory. A pre-existing Git or uv installation and shared Git credentials
+remain untouched. Open a new terminal after removal so it receives the cleaned
+user environment. The registry command removes a stale Installed Apps entry
+created by versions that shipped an automated uninstaller; it is harmless for
+new installations.
+
+## Development
+
+Run from the repository root:
 
 ```bash
 uv run python -m unittest discover -s tests -v
@@ -339,34 +192,20 @@ uv run tools/validate_skill.py skills/agents-md skills/python-standards
 git diff --check
 ```
 
-The tests cover event schema validation, atomic spool behavior, quarantine,
-dirty and wrong-branch runtime refusal, fast-forward sync, authentication
-detection, push-failure recovery, concurrent clients, per-machine refs,
-cross-ref deduplication, malicious-input redaction, rewritten refs, maintainer
-branch safety, learning idempotence, and aggregation idempotence.
+Changes to installation, scheduled tasks, authentication, runtime discovery, or
+filesystem paths also require the Windows 11 and Cursor checks in `TESTING.md`.
 
-Windows installation and Cursor discovery still require the VM protocol in
-`TESTING.md`; unit tests do not substitute for the GUI, GCM, Task Scheduler,
-SmartScreen, or Cursor canary checks.
-
-## Repository layout
+## Layout
 
 ```text
-skills/               reviewed runtime skills discovered by Cursor
-tools/validate_skill.py  maintainer/CI validation, not a fleet skill
-manage.py              runtime, event transport, and aggregation
-bootstrap.ps1          Windows installer and scheduled-task setup
-install.cmd            double-click wrapper for a configured Zip
-uninstall.ps1/.cmd      standalone per-user uninstall and double-click fallback
-fix-signin.cmd/.ps1    interactive GCM repair for both repositories
-metrics/               reviewed aggregates, checkpoints, fleet, rejections
-tests/                 unit and local bare-Git integration tests
-PRIVACY.md             collected fields, exclusions, access, retention
-TESTING.md             Windows VM and Cursor canary protocol
-ROADMAP.md             remaining pilot work
-AGENTS.md              maintainer instructions for this repository
+skills/                 reviewed Cursor skills
+manage.py               safe updater and learning-feedback transport
+bootstrap.ps1           Windows installer and task registration
+install.cmd             optional double-click wrapper
+fix-signin.cmd/.ps1     interactive Git sign-in repair
+feedback/               processed learning IDs and content-free rejections
+tests/                  local real-Git integration tests
+PRIVACY.md              exact feedback boundary
+TESTING.md              Windows and Cursor canary
+ROADMAP.md              remaining pilot gates
 ```
-
-The design intentionally has no teammate authoring workflow. A new or changed
-skill is ordinary reviewed repository work performed by a maintainer from a
-normal development clone.

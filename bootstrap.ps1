@@ -6,9 +6,10 @@
 #   irm https://<internal-host>/bootstrap.ps1 | iex
 #
 # The skills clone at %USERPROFILE%\.agents is runtime-only. All mutable state
-# (events, logs, config, locks, and the local inbox clone) lives under
-# %LOCALAPPDATA%\AgentSkills. The nightly task publishes only to this machine's
-# inbox branch and fast-forwards a clean runtime checkout; it never resets or
+# (feedback, logs, config, locks, and the local inbox clone) lives under
+# %LOCALAPPDATA%\AgentSkills. The nightly task publishes only explicit factual
+# corrections to this machine's inbox branch and fast-forwards a clean runtime;
+# it never resets or
 # pushes the skills repository.
 #
 # This file stays ASCII because Windows PowerShell 5.1 reads BOM-less scripts
@@ -19,36 +20,33 @@
 param(
     [string]$RepoUrl = '',
     [string]$InboxRepoUrl = '',
-    [string]$TaskTime = '02:00',
-    [switch]$Uninstall
+    [string]$TaskTime = '02:00'
 )
 
 # Set both before publishing the installer.
 $DefaultRepoUrl = ''
 $DefaultInboxRepoUrl = ''
 
-$Dependencies = @(
-    @{ Command = 'git'
-       Name = 'Git for Windows (includes Git Credential Manager)'
-       WingetId = 'Git.Git'
-       Hint = 'Install Git for Windows manually, then re-run.' }
-    @{ Command = 'uv'
-       Name = 'uv (runs the sync tooling)'
-       WingetId = 'astral-sh.uv'
-       Fallback = { Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression }
-       Hint = 'Install uv manually from https://docs.astral.sh/uv/, then re-run.' }
-)
-
 $ErrorActionPreference = 'Stop'
 $RuntimeDir = Join-Path $HOME '.agents'
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set for this Windows user.' }
 $StateDir = Join-Path $env:LOCALAPPDATA 'AgentSkills'
-$UninstallDir = Join-Path $StateDir 'uninstall'
-$UninstallRegistryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSkills'
+$ToolsDir = Join-Path $StateDir 'tools'
+$PythonDir = Join-Path $StateDir 'python'
+$UvCacheDir = Join-Path $StateDir 'uv-cache'
 $TaskName = 'AgentSkillsNightly'
 $StartTime = Get-Date
 $script:Step = 0
-$TotalSteps = 7
+$TotalSteps = 6
+
+# Pinned official release artifacts make missing-dependency installation
+# deterministic and keep it entirely inside this user's LocalAppData. Update
+# each URL and checksum together after validating a newer release.
+$PortableGitUrl = 'https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.2/PortableGit-2.55.0.2-64-bit.7z.exe'
+$PortableGitSha256 = 'b20d42da3afa228e9fa6174480de820282667e799440d655e308f700dfa0d0df'
+$UvUrl = 'https://github.com/astral-sh/uv/releases/download/0.11.28/uv-x86_64-pc-windows-msvc.zip'
+$UvSha256 = '0a23463216d09c6a72ff80ef5dc5a795f07dc1575cb84d24596c2f124a441b7b'
+$ManagedPython = '3.14.6'
 
 function Write-Step([string]$Message) {
     $script:Step++
@@ -63,66 +61,137 @@ function Update-SessionPath {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
-function Install-Dependency([hashtable]$Dependency) {
-    if (Get-Command $Dependency.Command -ErrorAction SilentlyContinue) {
-        Write-Note "$($Dependency.Command): already installed."
-        return
+function Add-UserPath([string]$Directory) {
+    $directoryKey = $Directory.TrimEnd('\')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $entries = @($userPath -split ';' | Where-Object { $_ })
+    $present = $entries | Where-Object { $_.TrimEnd('\') -ieq $directoryKey }
+    if (-not $present) {
+        $entries += $Directory
+        [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
     }
-    Write-Note "$($Dependency.Command): installing $($Dependency.Name)..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id $Dependency.WingetId -e --silent --source winget `
-            --disable-interactivity --accept-source-agreements --accept-package-agreements
-        Update-SessionPath
-    }
-    if (-not (Get-Command $Dependency.Command -ErrorAction SilentlyContinue) -and $Dependency.Fallback) {
-        Write-Note "$($Dependency.Command): winget unavailable; using the fallback installer..."
-        & $Dependency.Fallback
-        Update-SessionPath
-    }
-    if (-not (Get-Command $Dependency.Command -ErrorAction SilentlyContinue)) {
-        throw "$($Dependency.Name) did not install cleanly. $($Dependency.Hint)"
+    Update-SessionPath
+}
+
+function Save-VerifiedDownload(
+    [string]$Url,
+    [string]$ExpectedSha256,
+    [string]$Destination
+) {
+    $parent = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
+        $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash.ToLowerInvariant()
+        if ($actual -ne $ExpectedSha256) {
+            throw "Checksum mismatch for $Url (expected $ExpectedSha256, got $actual)."
+        }
+    } catch {
+        Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        throw
     }
 }
 
-function Install-Uninstaller {
-    $source = Join-Path $RuntimeDir 'uninstall.ps1'
-    if (-not (Test-Path $source -PathType Leaf)) {
-        throw "The runtime does not contain uninstall.ps1: $source"
+function Install-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Write-Note 'git: already installed.'
+        return
     }
 
-    New-Item -ItemType Directory -Force -Path $UninstallDir | Out-Null
-    $target = Join-Path $UninstallDir 'uninstall.ps1'
-    Copy-Item -Force $source $target
-
-    $manifest = [ordered]@{
-        schema_version = 1
-        runtime_path = $RuntimeDir
-        runtime_repo_url = $RepoUrl
-        state_path = $StateDir
+    Write-Note 'git: installing the pinned portable Git for Windows release per-user...'
+    $installDir = Join-Path $ToolsDir 'git'
+    $archive = Join-Path $env:TEMP 'AgentSkills-PortableGit.exe'
+    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+    Save-VerifiedDownload $PortableGitUrl $PortableGitSha256 $archive
+    try {
+        & $archive "-o$installDir" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Portable Git extraction failed with exit code $LASTEXITCODE." }
+    } finally {
+        Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
     }
-    $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 `
-        (Join-Path $UninstallDir 'install.json')
-
-    $version = (git -C $RuntimeDir rev-parse --short=12 HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $version) {
-        throw 'Could not determine the installed runtime version.'
+    $commandDir = Join-Path $installDir 'cmd'
+    if (-not (Test-Path (Join-Path $commandDir 'git.exe'))) {
+        throw 'Portable Git extraction did not produce cmd\git.exe.'
     }
-    $uninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$target`" -Pause"
-    New-Item -Path $UninstallRegistryKey -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name DisplayName `
-        -Value 'Team Agent Skills' -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name DisplayVersion `
-        -Value $version -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name Publisher `
-        -Value 'Team Agent Skills' -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name InstallLocation `
-        -Value $RuntimeDir -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name UninstallString `
-        -Value $uninstallString -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name NoModify `
-        -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path $UninstallRegistryKey -Name NoRepair `
-        -Value 1 -PropertyType DWord -Force | Out-Null
+    Add-UserPath $commandDir
+}
+
+function Install-Uv {
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        Write-Note 'uv: already installed.'
+        return
+    }
+
+    Write-Note 'uv: installing the pinned official release per-user...'
+    $installDir = Join-Path $ToolsDir 'uv'
+    $archive = Join-Path $env:TEMP 'AgentSkills-uv.zip'
+    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+    Save-VerifiedDownload $UvUrl $UvSha256 $archive
+    try {
+        Expand-Archive -LiteralPath $archive -DestinationPath $installDir -Force
+    } finally {
+        Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path (Join-Path $installDir 'uv.exe'))) {
+        throw 'uv extraction did not produce uv.exe.'
+    }
+    Add-UserPath $installDir
+}
+
+function Install-Python([string]$UvPath) {
+    $configured = [Environment]::GetEnvironmentVariable('AGENT_SKILLS_PYTHON', 'User')
+    if ($configured -and (Test-Path $configured -PathType Leaf)) {
+        Write-Note 'python: already installed for Agent Skills.'
+        $env:AGENT_SKILLS_PYTHON = $configured
+        $script:AgentSkillsPython = $configured
+        return
+    }
+
+    Write-Note "python: installing managed Python $ManagedPython per-user..."
+    Remove-Item -LiteralPath $PythonDir -Recurse -Force -ErrorAction SilentlyContinue
+    $previousErrorPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell promotes redirected native stderr to an error
+        # record. uv writes progress there, so keep it non-terminating here.
+        $ErrorActionPreference = 'Continue'
+        & $UvPath python install $ManagedPython --install-dir $PythonDir --no-bin `
+            --no-registry --cache-dir $UvCacheDir 2>$null
+        $installExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorPreference
+    }
+
+    # Some hardened Windows sessions refuse to traverse uv's convenience
+    # junction even though the versioned Python installation is valid. The
+    # runtime always uses the real versioned interpreter, so remove junctions.
+    $junctions = Get-ChildItem -LiteralPath $PythonDir -Directory -Force `
+        -ErrorAction SilentlyContinue | Where-Object {
+            $_.Attributes -band [IO.FileAttributes]::ReparsePoint
+        }
+    foreach ($junction in $junctions) {
+        Remove-Item -LiteralPath $junction.FullName -Force
+    }
+
+    $pythonPath = Get-ChildItem -LiteralPath $PythonDir -Directory `
+        -ErrorAction SilentlyContinue | Where-Object {
+            -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        } | Sort-Object Name -Descending | ForEach-Object {
+            Join-Path $_.FullName 'python.exe'
+        } | Where-Object {
+            Test-Path $_ -PathType Leaf
+        } | Select-Object -First 1
+
+    if (-not $pythonPath) {
+        throw "Managed Python installation failed with exit code $installExit."
+    }
+    & $pythonPath -c 'import json, pathlib, subprocess, tempfile, uuid'
+    if ($LASTEXITCODE -ne 0) { throw 'The managed Python interpreter failed its import check.' }
+    if ($installExit -ne 0) {
+        Write-Note 'python: ignored an unusable convenience junction; the real interpreter is healthy.'
+    }
+    [Environment]::SetEnvironmentVariable('AGENT_SKILLS_PYTHON', $pythonPath, 'User')
+    $env:AGENT_SKILLS_PYTHON = $pythonPath
+    $script:AgentSkillsPython = $pythonPath
 }
 
 function Register-NightlyTask([string]$Command) {
@@ -141,7 +210,7 @@ function Register-NightlyTask([string]$Command) {
     $folder = $service.GetFolder('\')
     $definition = $service.NewTask(0)
     $definition.RegistrationInfo.Description = `
-        'Publishes Agent Skills events and safely fast-forwards the runtime.'
+        'Publishes Agent Skills feedback and safely fast-forwards the runtime.'
     $definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
     $definition.Principal.RunLevel = 0  # TASK_RUNLEVEL_LUA
     $definition.Settings.Enabled = $true
@@ -172,26 +241,20 @@ function Register-NightlyTask([string]$Command) {
     if (-not $registered) { throw "Task '$TaskName' was not registered." }
 }
 
-if ($Uninstall) {
-    $candidates = @(
-        (Join-Path $UninstallDir 'uninstall.ps1'),
-        $(if ($PSScriptRoot) { Join-Path $PSScriptRoot 'uninstall.ps1' })
-    ) | Where-Object { $_ -and (Test-Path $_ -PathType Leaf) }
-    $uninstaller = $candidates | Select-Object -First 1
-    if (-not $uninstaller) {
-        throw 'uninstall.ps1 was not found. Download it from the same internal location as bootstrap.ps1.'
-    }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $uninstaller
-    exit $LASTEXITCODE
-}
-
 Write-Host ''
 Write-Host 'Team Agent Skills setup' -ForegroundColor Green
-Write-Host '  Installs a read-only Cursor skill runtime and a separate local event spool.'
-Write-Host '  Expect one corporate sign-in window and possibly an installer consent prompt.'
+Write-Host '  Installs a read-only Cursor skill runtime and a small feedback queue.'
+Write-Host '  Runs entirely as the current user; no administrator prompt is required.'
+Write-Host '  Expect one corporate sign-in window when private repositories need authentication.'
 
 Write-Step 'Installing dependencies'
-foreach ($dependency in $Dependencies) { Install-Dependency $dependency }
+[Net.ServicePointManager]::SecurityProtocol = `
+    [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+Install-Git
+Install-Uv
+$uvPath = (Get-Command uv).Source
+Install-Python $uvPath
+$pythonPath = $script:AgentSkillsPython
 
 Write-Step 'Resolving the two repositories'
 if (-not $RepoUrl) { $RepoUrl = $env:AGENT_SKILLS_REPO_URL }
@@ -232,38 +295,33 @@ git ls-remote --heads $InboxRepoUrl | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not authenticate to the inbox repository.' }
 
 Write-Step 'Configuring isolated local state'
-$uvPath = (Get-Command uv).Source
 New-Item -ItemType Directory -Force -Path (Join-Path $StateDir 'logs') | Out-Null
 Push-Location $RuntimeDir
 try {
-    & $uvPath run manage.py configure --runtime-path $RuntimeDir --repo-url $RepoUrl `
+    & $pythonPath manage.py configure --runtime-path $RuntimeDir --repo-url $RepoUrl `
         --inbox-repo-url $InboxRepoUrl --branch main --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { throw 'Manager configuration failed.' }
 } finally {
     Pop-Location
 }
 
-Write-Step 'Registering Windows uninstall support'
-Install-Uninstaller
-Write-Note 'Available in Windows Settings under Installed apps.'
-
 Write-Step "Registering the nightly sync (daily at $TaskTime)"
 $logPath = Join-Path $StateDir 'logs\task.log'
 $runtimeEscaped = $RuntimeDir -replace "'", "''"
 $stateEscaped = $StateDir -replace "'", "''"
-$uvEscaped = $uvPath -replace "'", "''"
+$pythonEscaped = $pythonPath -replace "'", "''"
 $logEscaped = $logPath -replace "'", "''"
-$command = "Set-Location '$runtimeEscaped'; & '$uvEscaped' run manage.py nightly --state-dir '$stateEscaped' *>> '$logEscaped'"
+$command = "Set-Location '$runtimeEscaped'; & '$pythonEscaped' manage.py nightly --state-dir '$stateEscaped' *>> '$logEscaped'"
 Register-NightlyTask $command
 Write-Note "Task '$TaskName' registered."
 
-Write-Step 'Publishing the first heartbeat and verifying the install'
+Write-Step 'Verifying the install'
 $healthy = $true
 Push-Location $RuntimeDir
 try {
-    & $uvPath run manage.py nightly --state-dir $StateDir
+    & $pythonPath manage.py sync --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { $healthy = $false }
-    & $uvPath run manage.py doctor --state-dir $StateDir
+    & $pythonPath manage.py doctor --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { $healthy = $false }
 } finally {
     Pop-Location
@@ -279,6 +337,5 @@ if (-not $healthy) {
 Write-Host "All set (took ${elapsed}s). Cursor can now discover the team skills." -ForegroundColor Green
 Write-Host "  Runtime: $RuntimeDir"
 Write-Host "  Local state and logs: $StateDir"
-Write-Host '  Uninstall: Windows Settings > Apps > Installed apps > Team Agent Skills.'
 Write-Host '  Repair expired sign-in: double-click fix-signin.cmd in the runtime folder.'
 Write-Host '  Try: open Cursor and ask "set up this Python repo to our standards".'
