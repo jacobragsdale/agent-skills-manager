@@ -29,9 +29,10 @@ uv run tools/validate_skill.py skills/agents-md skills/python-standards
 git diff --check
 ```
 
-Changes to `bootstrap.ps1`, `install.cmd`, `fix-signin.cmd`, task scheduling,
-Git authentication, runtime discovery, or filesystem paths also require the
-Windows and Cursor protocol in `TESTING.md`. Record the result there.
+Changes to `bootstrap.ps1`, task scheduling, Git authentication, runtime
+discovery, or filesystem paths also require the standard-user Windows canary
+listed in the README: missing Git and uv, no UAC, passing `doctor`, and a
+successful on-demand nightly task.
 
 ## Skill changes
 
@@ -57,7 +58,7 @@ corroborated lessons into `SKILL.md` deliberately.
   UAC.
 - `feedback/ingestion-state.json` stores processed learning IDs.
 - `feedback/REJECTED.md` contains only content-free rejection reasons.
-- `PRIVACY.md` is the exact collection contract.
+- The README is the user-facing install guide and exact feedback boundary.
 
-Keep `README.md`, `ROADMAP.md`, `TESTING.md`, and behavior aligned. Do not add
-speculative implementation plans to the runtime repository.
+Keep the README and behavior aligned. Track future work in issues instead of
+adding speculative plans to the runtime repository.
