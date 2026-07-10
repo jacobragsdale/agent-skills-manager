@@ -1,198 +1,334 @@
-# agent-skills-manager
+# Agent Skills Manager
 
-**Your team's coding agents, learning from each other's mistakes — automatically.**
+Distribute a small, reviewed library of user-scoped Cursor skills to a
+software team, observe how those skills behave in real work, and turn factual
+corrections into reviewed improvements without giving developer machines write
+access to the skills repository.
 
-Every developer using Cursor, Claude Code, Codex, or Copilot is quietly
-re-teaching their agent the same lessons: the flag that changed, the internal
-proxy dance, the deploy step everyone forgets. That knowledge evaporates at
-the end of each session, on each machine, for each person.
+The system deliberately separates three kinds of state:
 
-This repo turns [Agent Skills](https://agentskills.io) into a **team
-memory with a feedback loop**: skills are distributed to every machine
-nightly, agents record what went wrong in the field, and a weekly reviewed
-pull request folds those corrections back into the skills everyone runs
-tomorrow. No servers, no telemetry infrastructure, no new tools — the entire
-system is **git plus one scheduled task**.
+1. **Runtime:** `%USERPROFILE%\.agents` is a clean, read-only checkout that
+   Cursor discovers as `~/.agents/skills`.
+2. **Local state:** `%LOCALAPPDATA%\AgentSkills` holds pending events, logs,
+   locks, configuration, and a disposable inbox clone.
+3. **Team review:** a maintainer aggregates untrusted inbox events into a
+   normal pull request against protected `main`.
 
-## How it works
+## Goals
+
+- Install the same reviewed Cursor skills for every teammate with one command.
+- Keep the runtime current without resetting, switching, or writing an
+  arbitrary working branch.
+- Preserve telemetry through network, authentication, and process failures.
+- Let every machine publish without contending on one Git ref.
+- Collect corrections without putting prompts, code, repository paths, user
+  names, or host names into telemetry.
+- Keep all changes to skills behind normal branch protection and human review.
+- Describe metrics honestly: a locally written event is a **recorded
+  invocation**, not proof of adoption or task success.
+
+## Non-goals
+
+- Teammates do not author or propose skills through the managed runtime.
+  Maintainers use an ordinary development clone and pull request.
+- This is not a general analytics or employee-monitoring platform.
+- Local recording is not assumed complete. Cursor's Enterprise Analytics API
+  can provide an independent daily count after a canary proves that it includes
+  locally installed user skills.
+- The first release targets native Windows 11 and Cursor. The skill files use
+  the open Agent Skills format, but other agent surfaces are not installed or
+  tested by this project.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph fleet["Every machine, nightly"]
-        A["Agent uses a skill,<br/>appends corrections to LEARNINGS.md,<br/>usage + requests to local spools"]
-        H["manage.py nightly<br/>(Windows Task Scheduler)"]
-        A --> H
+    subgraph machine["Developer machine"]
+        C["Cursor"]
+        R["~/.agents<br/>read-only runtime"]
+        S["%LOCALAPPDATA%\\AgentSkills<br/>pending events + logs + lock"]
+        N["Nightly scheduled task"]
+
+        C -->|"discovers SKILL.md"| R
+        C -. "records start, outcome, learning" .-> S
+        N -->|"publish pending events"| S
+        N -->|"fetch + fast-forward only"| R
     end
 
-    subgraph repo["Team repo (cloned as ~/.agents)"]
-        I["learnings/inbox/<br/>metrics/inbox/<br/>requests/inbox/<br/>machines/*.json"]
-        M["main"]
+    subgraph transport["Separate inbox repository"]
+        B1["inbox/v1/machine-a/2026-07"]
+        B2["inbox/v1/machine-b/2026-07"]
     end
 
-    subgraph weekly["One machine, weekly"]
-        W["Headless agent runs<br/>prompts/weekly-learnings-fold.md"]
-        PR["Fold PR:<br/>LEARNINGS folded + deduped<br/>SKILL.md improvements<br/>dashboard + backlog + fleet health"]
-        W --> PR
+    subgraph review["Maintainer workflow"]
+        A["Deterministic aggregator<br/>validate + dedupe + checkpoint"]
+        V["Pilot canary comparison"]
+        P["Aggregation branch"]
+        PR["Reviewed pull request"]
     end
 
-    H -- "harvest: push uniquely-named<br/>files (zero conflicts)" --> I
-    H -- "hard reset = update pull" --> M
-    M -- "skills + rules + tooling<br/>(self-updating)" --> H
-    I --> W
-    PR -- "human review, merge" --> M
+    M["Protected skills main"]
+    API["Cursor Skill Adoption API<br/>pilot canary comparison"]
+
+    S -->|"fast-forward push to own monthly ref"| B1
+    S -->|"fast-forward push to own monthly ref"| B2
+    B1 --> A
+    B2 --> A
+    API -. "daily skill counts" .-> V
+    A -. "local recorded counts" .-> V
+    A --> P --> PR --> M
+    M -->|"members have read access only"| R
 ```
 
-Three loops ride the same pipe:
+The skills and inbox repositories have intentionally different permissions.
+Members need `Read` on the skills repository and permission to create/push
+branches in the inbox repository. They do not need `Contribute` or `Bypass
+policies when pushing` on protected skills `main`.
 
-- **Learnings** — after using a skill, agents append one dated correction
-  line to its `LEARNINGS.md`. Nightly harvest ships them upstream; the
-  weekly agent semantically dedupes across the team, and lessons confirmed
-  by **two or more people** get folded into the skill itself — as separate,
-  droppable commits in a PR a human reviews.
-- **Metrics** — agents log each skill use to a local spool; the dashboard
-  (`metrics/DASHBOARD.md`) shows adoption, corrected-rates, struggling
-  skills, and deprecation candidates. The fleet heartbeats in
-  `machines/*.json` flag broken installs nobody noticed.
-- **Requests** — when an agent watches a user struggle at a task no skill
-  covers, it logs the need. The weekly triage ranks `requests/BACKLOG.md`
-  by distinct requesters: a demand-ranked backlog of skills worth writing,
-  authored by the agents that saw the pain.
+## Safety invariants
 
-Contributing is a conversation: a teammate tells their agent
-*"this should be a team skill"*, and `/propose-skill` interviews them,
-scaffolds, validates, and opens the PR.
+The implementation treats these as testable contracts:
 
-## Why this design holds up
+- A member process never pushes the skills repository.
+- Runtime sync proceeds only when the configured path, origin, and branch all
+  match and the checkout is completely clean, including untracked files.
+- Runtime sync uses `git merge --ff-only`; the runtime path is never reset.
+- One cross-platform process lock protects nightly publication and sync.
+- Each event is a validated, immutable JSON file written with atomic rename.
+- Pending files move to `sent/` only after the corresponding Git push succeeds.
+- Every machine uses a random installation UUID and a monthly branch:
+  `inbox/v1/<machine-id>/<YYYY-MM>`.
+- Client pushes are fast-forward-only. No client rebases or force-pushes.
+- Aggregation rejects rewritten branches, modified event files, malformed
+  schemas, unsafe paths, and machine IDs that do not match the branch.
+- Aggregation is checkpointed and keeps a persistent event-ID index: reruns or
+  cross-ref copies produce no new counts or learnings.
 
-- **Machines are appliances.** The repo is cloned directly as `~/.agents`
-  (no symlinks — they need admin on Windows). Every night each clone pushes
-  its sanctioned local writes upstream as *uniquely-named files* — zero
-  merge conflicts at any fleet size — then hard-resets to `origin/main`.
-  Harvest **is** the update pull; drift is structurally impossible.
-- **The tooling ships inside the repo.** `manage.py` (single-file,
-  stdlib-only, PEP 723) updates itself with every nightly pull. New
-  features and dependencies reach the whole fleet without reinstalling
-  anything.
-- **Windows 11 only, on purpose.** One OS, one scheduled task, one install
-  path to polish and test. Dependencies live in a small table at the top of
-  `bootstrap.ps1` — adding one for the whole fleet is a one-row change.
-- **Improvement is gated, not automatic.** Agents may only append
-  learnings; skills change through the weekly fold PR, with evidence in the
-  description and one commit per fold so a reviewer can drop any single
-  change.
-- **Auth is your corporate sign-in, not tokens.** Members never touch a
-  PAT: Git Credential Manager (bundled with Git for Windows) pops one
-  Microsoft sign-in window at install and silently refreshes afterwards,
-  including for the scheduled task. If it ever expires, a Windows toast
-  points at `fix-signin.cmd` — one double-click repairs it. The only PAT in
-  the fleet lives on the maintainer machine, for the pull-request API.
+## What gets recorded
 
-## Quick start (teammate, Windows 11)
+Skill bodies call the local recorder at the beginning and end of a run. A
+start event contains:
 
-If your team hosts the install script (maintainer setup below), the whole
-install is one line in PowerShell — no git needed first, no tokens, no
-settings:
+```json
+{
+  "schema_version": 1,
+  "event_id": "e9d0e9f9-3499-4b35-b626-2aecbe5cbc43",
+  "event_type": "skill_invocation",
+  "invocation_id": "e9d0e9f9-3499-4b35-b626-2aecbe5cbc43",
+  "recorded_at": "2026-07-09T18:42:31Z",
+  "machine_id": "887f3358-9be7-48b9-a351-50089af35cf7",
+  "skill": {
+    "name": "python-standards",
+    "version": "18456eb84bcdd20d77460817282dffc81698d2d9"
+  },
+  "surface": {
+    "name": "cursor",
+    "version": null
+  },
+  "outcome": "unknown",
+  "correction_category": null
+}
+```
+
+The completion event references the invocation and records `ok`, `corrected`,
+`failed`, or `abandoned`. A correction can add one factual learning categorized
+as trigger behavior, instructions, tool drift, environment, missing context,
+or other.
+
+This local channel is still agent-mediated. It is more durable than a shared
+JSONL footer, but the agent can omit it. Therefore the dashboard calls it
+`recorded_invocations`. See [Privacy and retention](PRIVACY.md) for the exact
+data boundary.
+
+### Cursor-recorded usage
+
+Cursor staff [report an independent Skill Adoption endpoint but no
+skill-invocation hook](https://forum.cursor.com/t/hook-on-skill-usage/154896).
+The endpoint's response schema is not currently present in Cursor's
+[public Admin API reference](https://docs.cursor.com/en/account/teams/admin-api).
+This repository therefore does not ship a guessed importer. During the pilot,
+query it with an admin-scoped API key and a uniquely named canary to confirm
+the response contract, user-scoped
+`~/.agents/skills` coverage, and explicit versus automatic invocation behavior.
+Only then add a tested importer, storing its counts separately from local
+events.
+
+## Repository setup
+
+Create two Azure DevOps repositories:
+
+1. **Skills repository** — this repository. Protect `main` with required PR
+   review and validation. Give the member group `Read`, but deny direct
+   contribution and policy bypass on `main`.
+2. **Inbox repository** — initialize it with a small README on `main`. Allow
+   members to create and contribute branches. Treat every branch and event as
+   untrusted input. Maintainers need read access to all `inbox/v1/*` refs.
+
+Set both defaults near the top of `bootstrap.ps1` before publishing it:
 
 ```powershell
-irm https://<your-host>/bootstrap.ps1 | iex
+$DefaultRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills'
+$DefaultInboxRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills-inbox'
 ```
 
-No script host? Then it's two clicks and no terminal at all: open the repo
-in Azure DevOps in your browser, choose **⋯ → Download as Zip**, extract it
-anywhere, and double-click **install.cmd**. (Or, if you already have git:
-clone the repo anywhere and run
-`powershell -ExecutionPolicy Bypass -File bootstrap.ps1`.)
+Host that configured script at an internal HTTPS URL. Do not serve an
+unreviewed working-tree copy.
 
-Every entry point runs the same installer: it installs git + uv (winget
-with fallbacks), creates the managed clone at `%USERPROFILE%\.agents`,
-registers the nightly Scheduled Task, and runs a first sync — your machine
-appears on the team dashboard immediately. When git first talks to Azure DevOps, the familiar Microsoft
-sign-in window opens once; that is the only prompt. Idempotent — re-run any
-time; `bootstrap.ps1 -Uninstall` removes the task and the clone.
+## Install for a teammate
 
-## Which agents pick this up
+With both defaults configured, installation is one PowerShell command:
 
-The managed clone at `~/.agents` puts skills at `~/.agents/skills/` — an
-official user-level discovery path for **Cursor, Codex, and Copilot**, so
-those three see every skill natively with zero configuration. **Claude
-Code** reads only `~/.claude/skills`; set `AGENT_SKILLS_CLAUDE=1` and the
-nightly sync maintains per-skill links there. (On machines running both
-Claude Code and Cursor, disable Cursor's *Include third-party Plugins,
-Skills, and other configs* setting — Cursor also scans `~/.claude/skills`
-and does not dedupe.)
-
-All four agents load skills the same way: name + description always in
-context (~100 tokens/skill), body only when a skill fires, references only
-when read. The learnings/usage loop rides each skill's footer, so it is in
-context exactly when a skill runs — no always-on configuration needed.
-
-There is deliberately no always-on rules layer: no agent auto-loads rules
-from `~/.agents`, so anything that mattered there rides skill footers and
-descriptions instead — zero manual configuration per teammate.
-
-## Setting up for your team (maintainer, one-time)
-
-1. Push this repo to your Azure DevOps project.
-2. Set `$DefaultRepoUrl` near the top of `bootstrap.ps1` to your repo URL
-   and commit — members then never need to know or type it.
-3. Host `bootstrap.ps1` at any HTTPS URL teammates can reach **without
-   signing in** (intranet static server, Azure Storage static website,
-   internal tools page) and distribute the one-liner. Re-publish the copy
-   whenever `bootstrap.ps1` changes. Azure DevOps itself cannot serve raw
-   files anonymously — that is why the Zip + `install.cmd` path exists as
-   the zero-hosting fallback; if you skip this step, distribute those
-   instructions instead.
-4. On YOUR machine only, create an ADO PAT (Code read & write) and run
-   `bootstrap.ps1 -FoldMachine` with `$env:AGENT_SKILLS_PAT` set — this is
-   the one machine that talks to the PR API. Its nightly job then runs the
-   mechanical fold and opens PRs for teammates' pushed `skill/*` proposal
-   branches (`manage.py sweep-proposals`).
-5. For the judgment-enhanced weekly fold, schedule your headless agent CLI
-   against the committed prompt:
-
-   ```powershell
-   cd $HOME\.agents; agent -p (Get-Content prompts\weekly-learnings-fold.md -Raw)
-   ```
-
-6. Optional: set `TEAMS_WEBHOOK_URL` on the fold machine for a weekly
-   digest that credits contributors whose lessons got promoted.
-7. Recommended: branch policy requiring review on `learnings/fold` PRs.
-
-Hosting elsewhere? Harvest works with any git remote; only the PR-creation
-and auth-header helpers are Azure DevOps-specific (one small function each
-to swap for GitHub/GitLab).
-
-## Layout
-
-```
-skills/<name>/          one folder per skill: SKILL.md + LEARNINGS.md (+ scripts/, references/)
-prompts/                versioned prompts for scheduled agent jobs
-learnings/inbox/        harvested corrections awaiting the weekly fold
-metrics/inbox/ + DASHBOARD.md    usage telemetry and the weekly dashboard
-requests/inbox/ + BACKLOG.md     demand-ranked backlog of skills to build
-machines/               per-machine heartbeats (fleet health)
-manage.py               nightly sync/harvest/fold/sweep engine (self-updating)
-bootstrap.ps1           one-time Windows machine setup (irm | iex, zip, or clone)
-install.cmd             double-click installer for the zip-download path
-fix-signin.cmd          one-click repair when the cached sign-in expires
-TESTING.md              clean-VM install test protocol (Windows 11)
-AGENTS.md               rules for agents working inside this repo
-ROADMAP.md              where this goes: trigger CI, drift detection, multi-team scale
+```powershell
+irm https://<internal-host>/bootstrap.ps1 | iex
 ```
 
-`manage.py doctor` verifies any machine; `.manager/` holds local logs,
-backups, and spools (gitignored).
+Alternative entry points:
 
-## The conventions that make it work
+```powershell
+# Explicit URLs
+powershell -ExecutionPolicy Bypass -File bootstrap.ps1 `
+  -RepoUrl '<skills-repo-url>' `
+  -InboxRepoUrl '<inbox-repo-url>'
 
-Every skill follows the house process in `skills/agent-create-skill`
-(interview → scaffold → validate → trigger-test → learnings loop). Skills
-are model-invocable by default — descriptions are written as pushy triggers
-with explicit "Do NOT use" boundaries, tuned against the invocation
-mechanics documented in
-`skills/agent-create-skill/references/invocation.md`, and the library is
-kept deliberately small (every description enters every session's context).
-The improvement loop (read LEARNINGS first; log usage and corrections
-after) rides each skill's footer. Nothing else about a machine is trusted
-or preserved — which is exactly why the system stays healthy with zero
-ongoing administration.
+# A browser-downloaded repository Zip can use install.cmd after the two
+# defaults have been committed into bootstrap.ps1.
+```
+
+The installer:
+
+1. Installs Git for Windows and uv when missing.
+2. Clones the runtime to `%USERPROFILE%\.agents`.
+3. Creates configuration and mutable state in
+   `%LOCALAPPDATA%\AgentSkills`.
+4. Registers `AgentSkillsNightly` with `StartWhenAvailable` and
+   `IgnoreNew` multiple-instance behavior.
+5. Publishes a first heartbeat, runs a safe sync, and executes `doctor`.
+
+If verification fails, installation exits nonzero. Re-running is idempotent.
+`bootstrap.ps1 -Uninstall` asks separately before deleting the runtime and
+state so pending events are visible before removal.
+
+## Nightly behavior and recovery
+
+The scheduled command is equivalent to:
+
+```powershell
+cd $HOME\.agents
+uv run manage.py nightly --state-dir "$env:LOCALAPPDATA\AgentSkills"
+```
+
+The job attempts runtime sync first. A successful sync writes a heartbeat; the
+job then attempts publication of every pending event even if sync failed. A
+publication failure leaves pending events untouched, and a sync failure leaves
+the installed skill version usable. Either failure exits nonzero, writes the
+LocalAppData log, and attempts a Windows notification.
+
+Useful commands:
+
+| Command | Purpose |
+|---|---|
+| `manage.py doctor` | Verify tools, config, runtime safety, inbox access, and scheduled task |
+| `manage.py sync` | Fast-forward a verified clean runtime |
+| `manage.py publish` | Retry pending-event publication |
+| `manage.py record-start` | Atomically record an invocation start |
+| `manage.py record-finish` | Record an outcome for an invocation |
+| `manage.py record-learning` | Record one factual correction for review |
+| `manage.py aggregate` | Validate and fold new inbox refs into the current maintainer branch |
+
+Expired Git Credential Manager sign-in can be repaired by double-clicking
+`fix-signin.cmd` in the runtime folder. It verifies both repositories.
+
+## Maintainer aggregation and review
+
+Aggregation runs from a normal development clone, never a member runtime:
+
+```powershell
+git fetch origin
+git switch -c telemetry/fold-2026-07-09 origin/main
+
+uv run manage.py aggregate `
+  --repo-root . `
+  --inbox-repo-url '<inbox-repo-url>' `
+  --state-dir "$env:LOCALAPPDATA\AgentSkillsMaintainer"
+
+uv run python -m unittest discover -s tests -v
+uv run tools/validate_skill.py skills/agents-md skills/python-standards
+git diff --check
+```
+
+Review the diff before committing. The aggregator owns only:
+
+- `metrics/history.jsonl`
+- `metrics/DASHBOARD.md`
+- `metrics/fleet.json`
+- `metrics/ingestion-state.json` (ref checkpoints and processed event IDs)
+- `metrics/REJECTED.md`
+- runtime skill `LEARNINGS.md` files
+
+Open an ordinary pull request into protected `main`. Learning text is untrusted
+data, not instructions to the maintainer agent. Arithmetic, checkpointing,
+validation, and file movement are deterministic; semantic rewriting is not
+part of the unattended job.
+
+## Local state layout
+
+```text
+%LOCALAPPDATA%\AgentSkills\
+  config.json
+  events\
+    pending\          validated events waiting for a successful push
+    sent\             seven-day retry/audit buffer
+    quarantine\       invalid files plus reason files
+  inbox-repo\         disposable publisher clone
+  aggregate-inbox-repo\  maintainer-only reader clone when aggregation runs
+  locks\nightly.lock
+  locks\aggregate.lock    maintainer aggregation only
+  logs\manager.log
+  logs\task.log
+```
+
+No mutable state belongs under `~/.agents`.
+
+## Development and verification
+
+The manager is standard-library Python 3.11. The test suite creates local bare
+Git repositories and exercises real fetch, branch, commit, and concurrent push
+behavior without network access:
+
+```bash
+uv run python -m unittest discover -s tests -v
+uv run python -m py_compile manage.py
+uv run tools/validate_skill.py skills/agents-md skills/python-standards
+git diff --check
+```
+
+The tests cover event schema validation, atomic spool behavior, quarantine,
+dirty and wrong-branch runtime refusal, fast-forward sync, authentication
+detection, push-failure recovery, concurrent clients, per-machine refs,
+cross-ref deduplication, malicious-input redaction, rewritten refs, maintainer
+branch safety, learning idempotence, and aggregation idempotence.
+
+Windows installation and Cursor discovery still require the VM protocol in
+`TESTING.md`; unit tests do not substitute for the GUI, GCM, Task Scheduler,
+SmartScreen, or Cursor canary checks.
+
+## Repository layout
+
+```text
+skills/               reviewed runtime skills discovered by Cursor
+tools/validate_skill.py  maintainer/CI validation, not a fleet skill
+manage.py              runtime, event transport, and aggregation
+bootstrap.ps1          Windows installer and scheduled-task setup
+install.cmd            double-click wrapper for a configured Zip
+fix-signin.cmd/.ps1    interactive GCM repair for both repositories
+metrics/               reviewed aggregates, checkpoints, fleet, rejections
+tests/                 unit and local bare-Git integration tests
+PRIVACY.md             collected fields, exclusions, access, retention
+TESTING.md             Windows VM and Cursor canary protocol
+ROADMAP.md             remaining pilot work
+AGENTS.md              maintainer instructions for this repository
+```
+
+The design intentionally has no teammate authoring workflow. A new or changed
+skill is ordinary reviewed repository work performed by a maintainer from a
+normal development clone.

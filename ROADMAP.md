@@ -1,86 +1,76 @@
 # Roadmap
 
-The load-bearing idea: the repo is a distribution channel with a nightly,
-conflict-free, bidirectional pipe to every machine. Harvest/inbox is not a
-learnings feature — it is a generic "ship any file upstream without
-coordination" mechanism, and everything below rides on it.
+The system is intentionally narrow: distribute reviewed user-scoped Cursor
+skills, preserve a clean runtime, return privacy-bounded field evidence through
+an untrusted inbox, and improve skills through ordinary reviewed pull requests.
 
-## 1. Pilot (built)
+## Implemented in the current development version
 
-- Windows fleet bootstrap (`bootstrap.ps1`): dependencies (extensible
-  table), `~/.agents` clone, nightly Scheduled Task; runs via one-liner,
-  zip + `install.cmd`, or clone.
-- Nightly harvest: LEARNINGS.md diffs → `learnings/inbox/` → hard reset.
-  Doubles as the update pull; machines are appliances.
-- Weekly agent-driven fold (`prompts/weekly-learnings-fold.md`): semantic
-  dedupe, SKILL.md folds gated on corroboration, one reviewable PR.
+- Runtime/state separation: `~/.agents` is read-only; mutable files live in
+  `%LOCALAPPDATA%\AgentSkills`.
+- Safe runtime sync: verified path, origin, expected branch, completely clean
+  worktree, fetch, and fast-forward only.
+- Cross-platform process lock around nightly publication and sync.
+- Versioned immutable JSON events with atomic local writes, strict field
+  validation, quarantine, and local retention.
+- Random installation identity with no username or hostname collection.
+- Separate inbox repository and monthly per-machine append-only refs.
+- Failure-safe publication: pending events move only after successful push.
+- Deterministic aggregation with checkpoints, rewritten-ref detection, path
+  validation, daily metrics, fleet state, rejected-event reporting, and
+  idempotent learning append.
+- A Cursor Skill Adoption canary protocol that keeps platform counts separate
+  from locally recorded invocations.
+- Teammate skill authoring, proposal sweeping, and uncovered-skill request
+  collection removed.
+- Standard-library unit and local bare-Git integration tests, including
+  concurrent clients and malicious input.
 
-## 2. Metrics + fleet health (built)
+## Pilot gates
 
-- Usage telemetry rides the harvest pipe: agents append to
-  `.manager/usage.jsonl` (per each skill's footer); harvest ships valid
-  lines to `metrics/inbox/`. No telemetry infrastructure, no server.
-- Heartbeats: every harvest updates `machines/<host>.json`. A machine
-  silent 3+ days is a broken install nobody noticed — the weekly job flags
-  it in the fold PR.
-- Weekly job aggregates `metrics/inbox/` into `metrics/history.jsonl` and
-  regenerates `metrics/DASHBOARD.md` inside the fold PR. Headline numbers:
-  invocations per skill (adoption), learnings per skill per week
-  (friction), corrected-rate per skill (quality), distinct contributors
-  (health), skills used per teammate per week (the adoption story for
-  management).
+- Complete every standard-user and GUI run in `TESTING.md` against the new
+  two-repository architecture.
+- Verify `New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew` on the
+  supported Windows 11 image.
+- Run the Cursor canary: explicit invocation, automatic invocation, repeated
+  use in one conversation, local start/finish events, Enterprise Analytics
+  comparison, and capture of the endpoint's actual response contract.
+- Configure Azure DevOps permissions in a rehearsal project: members read
+  skills, create inbox branches, and cannot push or bypass protected skills
+  `main`.
+- Exercise expired GCM credentials for both repositories.
+- Add and rehearse processed inbox-branch retention automation.
+- Run a five-to-ten-person pilot for at least two weekly aggregation cycles.
 
-## 3. Contribution (built)
+Pilot success criteria:
 
-- `/propose-skill`: teammate describes a pain point; the agent runs the
-  agent-create-skill interview, scaffolds on a branch, validates, opens the
-  PR. Contribution without knowing git, ADO, or the house format.
-- Demand signal: agents log uncovered struggles to `.manager/requests.md`
-  (per each skill's footer); harvest ships them to `requests/inbox/`; the
-  weekly job triages into `requests/BACKLOG.md` — a ranked backlog of
-  skills people actually need, written by the agents that watched them
-  struggle.
-- Recognition: fold attribution (`[user@host]`) is already stamped; weekly
-  job posts a Teams digest (set `TEAMS_WEBHOOK_URL`) — the week's lessons
-  and whose learning got promoted into a SKILL.md.
-- Ownership: treat `metadata.author` as maintainer; tag them as reviewer on
-  fold PRs touching their skill.
+- at least 90% first-attempt installation completion;
+- no runtime checkout rewritten or user work lost;
+- no event loss in injected failure tests;
+- nightly success visible through heartbeats;
+- aggregation reruns produce no duplicate counts or learnings;
+- dashboard wording survives privacy and engineering review;
+- canary establishes the measured completeness of local recording.
 
-## 4. Self-improving skills and rules (next)
+## After the pilot
 
-- Always-on rules (if reintroduced) get the learnings loop: a LEARNINGS
-  sibling, same harvest/fold path. A rule repeatedly ignored is a learning
-  about the rule's wording.
-- Trigger regression tests in CI: freeze each skill's trigger table
-  (10+ messages, near-miss negatives) as `tests/triggers.md`; an ADO
-  pipeline judges name + description on every PR. Full form: ~20 queries,
-  3 runs each (nondeterminism), 0.5 pass threshold, train/validation split
-  — per agentskills.io's description-optimization methodology.
-- Drift detection: skills declare tool-specific identifiers; a weekly job
-  runs the real tools and files an inbox entry when reality moves.
-- Lifecycle: many learnings = struggling skill; zero invocations in 90
-  days = deprecation candidate. Both fall out of the metrics.
+- Trigger regression fixtures and CI judging for every skill description.
+- A tested Cursor Skill Adoption importer, if the pilot proves stable
+  user-scoped coverage and a documented response contract.
+- Stable and canary release branches with a documented rollback rehearsal.
+- Automated monthly inbox-ref deletion after successful checkpoints and the
+  retention grace period.
+- A service account for maintainer aggregation instead of a personal token.
+- Drift probes for tool-specific flags and identifiers used by runtime skills.
+- Generated catalog and owner-review policies if the library grows enough to
+  need them.
 
-## 5. Multi-team and company scale (later)
+## Explicitly deferred
 
-- Core + overlay repos: company `agent-skills-core` (conventions, security
-  rules, universal skills) plus per-team repos; bootstrap layers both.
-  Team rules override core; core policy rules are non-overridable.
-  Learnings route by origin — core-skill lessons aggregate centrally.
-- Generated `CATALOG.md`: every skill's name, description, owner, team,
-  usage count. Cross-team discoverability stops five teams writing five
-  deployment skills. A team skill copied by a second team is a core
-  candidate.
-- Release channels: teams pin `stable` while the pilot team rides `main`;
-  promotion is a fast-forward, rollback is `git revert`.
-- Platformizing: service principal instead of personal PATs; Credential
-  Manager storage; branch policies + owner-reviewers; validation CI as the
-  quality bar that scales beyond one maintainer.
-
-## Sequencing
-
-Ship 1–3 to the pilot team and let the weekly fold PRs accumulate — they
-are the proof artifact. Metrics sell the second team. Contribution features
-matter when the second team arrives. Split core/overlay only when a second
-team actually exists. Platformize at company scale, at which point the
-"skill review board" is just the existing PR process with more names on it.
+- Multi-team overlays and company-wide catalogs.
+- Per-user dashboards or productivity scoring.
+- Conversation transcript collection.
+- Automatic creation of new skills from demand signals.
+- Unattended LLM edits to `SKILL.md`.
+- Supporting additional agent runtimes before the Windows/Cursor pilot is
+  stable.

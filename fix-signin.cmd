@@ -1,13 +1,14 @@
 @echo off
-rem One-click repair for expired Azure DevOps sign-in.
-rem A Microsoft sign-in window may open - use your corporate account.
-echo Re-authenticating to Azure DevOps...
-git -C "%USERPROFILE%\.agents" fetch origin
-if %errorlevel%==0 (
+rem Refresh Git Credential Manager sign-in for both Agent Skills repositories.
+echo Re-authenticating the Agent Skills runtime and inbox...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fix-signin.ps1"
+set "result=%errorlevel%"
+if %result%==0 (
   echo.
-  echo Sign-in OK. The nightly skills sync will resume automatically.
+  echo Sign-in OK. The nightly sync will resume automatically.
 ) else (
   echo.
-  echo Still failing. Contact the skills repo maintainer.
+  echo Sign-in still fails. Contact the Agent Skills maintainer.
 )
 pause
+exit /b %result%

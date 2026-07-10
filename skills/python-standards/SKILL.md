@@ -11,6 +11,16 @@ Bring any Python repo — usually brownfield internal code — to the house
 standard: uv-managed, one `pyproject.toml`, ruff + basedpyright enforced by
 pre-commit, zero custom setup steps.
 
+Before any other work, read `LEARNINGS.md` next to this file, then record the
+invocation in PowerShell and retain the printed UUID:
+
+```powershell
+$skillInvocation = uv run "$HOME\.agents\manage.py" record-start --skill python-standards --surface cursor
+```
+
+Telemetry failure must not block the user's task; continue and report the
+failure at handoff.
+
 ## Target state (definition of done)
 
 - [ ] `.python-version` pins `3.11`; `requires-python = ">=3.11"`
@@ -58,9 +68,9 @@ it — read it line by line.
 Run until clean, fixing ONE error at a time: `uv sync` → on failure READ
 `references/troubleshooting.md` and match the error signature → apply the
 fix in `pyproject.toml` (or `.env.example` for env-var fixes) → repeat.
-If you solve an error NOT in the playbook, APPEND it to
-`references/troubleshooting.md` in the skills repo — that is how this skill
-learns. Verify from zero: `rm -rf .venv && uv sync && uv run python -c
+If you solve an error NOT in the playbook, retain it as an `environment` or
+`tool-drift` learning for maintainer review — that is how this skill learns
+without mutating the runtime. Verify from zero: `rm -rf .venv && uv sync && uv run python -c
 "import <top_level_package>"`.
 
 ### 4. Pre-commit: ruff + basedpyright
@@ -122,23 +132,25 @@ env-fiddling get deleted. List them in a README "Running" table.
 - `scripts/setup_config.py` — RUN once to write `[tool.basedpyright]`.
 - `scripts/triage.py` — RUN for every type check; never bare basedpyright.
 - `scripts/audit_diff.py` — RUN before finishing type fixes.
-- `references/troubleshooting.md` — READ at the first `uv sync` failure; APPEND newly solved errors.
+- `references/troubleshooting.md` — READ at the first `uv sync` failure; record newly solved errors as learnings for maintainer review.
 - `references/precommit-and-lint.md` — READ in step 4; copy templates.
 - `references/rules.md` — READ for uncovered diagnostic rules and baseline mechanics.
 
-## Improving this skill
+## Record the outcome
 
-Solved `uv sync` errors are domain knowledge — they go in
-`references/troubleshooting.md` (step 3), not LEARNINGS.md.
+Before the final response, record `ok`, `failed`, or `abandoned`:
 
-Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use:
+```powershell
+uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill python-standards --surface cursor --outcome ok
+```
 
-1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
-   `{"ts": "<ISO-8601>", "skill": "python-standards", "outcome": "ok" | "corrected"}`
-   — `corrected` when the user had to fix or redirect your use of this skill.
-2. If the user corrected you or the outcome surprised you, also append one
-   dated line to `LEARNINGS.md`:
-   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
-   secrets. Do not edit SKILL.md directly — lessons are folded in
-   deliberately through a weekly reviewed PR.
+For a correction or new `uv sync` fix, record the closest category and one
+factual lesson; a maintainer decides whether it belongs in the playbook:
+
+```powershell
+uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill python-standards --surface cursor --outcome corrected --category tool-drift
+uv run "$HOME\.agents\manage.py" record-learning --invocation-id $skillInvocation --skill python-standards --surface cursor --category tool-drift --message "<what failed and what to do instead>"
+```
+
+Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
+Do not edit the runtime; the collector places the lesson in a reviewed PR.

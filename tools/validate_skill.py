@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyyaml"]
 # ///
-"""Validate an agent skill folder against the agentskills.io spec and house rules.
+"""Validate a runtime skill folder against the agentskills.io spec and house rules.
 
 Errors (exit 1) are spec violations; warnings encode house rules — address or
 consciously accept each one.

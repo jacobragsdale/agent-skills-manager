@@ -4,10 +4,10 @@ Match the error output against the signatures below, apply the fix, re-run
 `uv sync`. Fixes must land in `pyproject.toml` or `.env.example` — never in
 a shell script or a manual install.
 
-**This file is meant to grow.** When you solve an error that isn't listed,
-append an entry in this format (edit this file in the skills repo at
-`~/Development/jacob-agent-skills/skills/python-uv-setup/references/troubleshooting.md`,
-then remind the user to commit the skills repo):
+**This file is meant to grow through reviewed changes.** When you solve an
+error that isn't listed, record an `environment` or `tool-drift` learning
+through `manage.py`. A maintainer can add an entry in this format through a
+normal pull request:
 
 ```markdown
 ## <short name> — YYYY-MM-DD

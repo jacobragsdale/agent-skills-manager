@@ -1,17 +1,24 @@
 ---
 name: agents-md
-description: "Write or overhaul a repo's AGENTS.md (or CLAUDE.md) so coding agents work well there. Use when creating agent instructions for a repo, auditing a bloated or ignored AGENTS.md/CLAUDE.md, when agents repeat the same mistakes in a codebase, or when wiring instruction files across Cursor, Claude Code, Codex, and Copilot. Do NOT use for reusable task workflows — those are skills (use agent-create-skill)."
+description: "Write or overhaul a repo's AGENTS.md (or CLAUDE.md) so coding agents work well there. Use when creating agent instructions for a repo, auditing a bloated or ignored AGENTS.md/CLAUDE.md, when agents repeat the same mistakes in a codebase, or when wiring instruction files across Cursor, Claude Code, Codex, and Copilot. Do NOT use for reusable task workflows; those belong in a separately reviewed skill."
 metadata:
   author: jacob
 ---
 
 # Writing a repo's AGENTS.md
 
-Produce a repo-scoped AGENTS.md that makes any coding agent effective in that
-repo: verified commands, non-inferable rules, hard boundaries. The rules below
-are evidence-based (vendor docs, three empirical studies, analysis of praised
-production files) — `references/research-notes.md` has the receipts; read it
+Produce a repo-scoped AGENTS.md with verified commands, non-inferable rules,
+and hard boundaries. The evidence is in `references/research-notes.md`; read it
 when the user questions a rule.
+
+Before any other work, read `LEARNINGS.md` next to this file, then record the
+invocation in PowerShell and retain the printed UUID:
+
+```powershell
+$skillInvocation = uv run "$HOME\.agents\manage.py" record-start --skill agents-md --surface cursor
+```
+
+Telemetry failure must not block the task; continue and report it at handoff.
 
 ## Non-negotiables
 
@@ -122,32 +129,6 @@ file — comments are stripped before models see it):
 - Prune on a schedule: delete rules that newer models no longer need, and
   anything whose removal wouldn't cause mistakes.
 
-## Example
-
-The shape of a good result (excerpt):
-
-```markdown
-# acme-billing
-
-Django 4 invoicing monolith. Python 3.11, uv-managed, pnpm for the frontend.
-
-## Commands
-uv run pytest tests/path/test_x.py -x   # single file — full suite ~6 min, avoid
-uv run pytest -m "not integration"      # pre-push safety net, ~40 s
-pnpm --filter dashboard test            # frontend — NEVER npm (breaks lockfile)
-
-## Gotchas
-- `models/legacy_ledger.py` looks dead but backs the nightly reconciliation
-  job — intentional, do not delete.
-- Migrations: generate with `uv run manage.py makemigrations`, but ALWAYS ask
-  before applying to any shared database.
-
-## Boundaries
-- Always: run the single-file test for anything you touch.
-- Ask first: schema migrations, new dependencies, editing `infra/`.
-- Never: commit secrets; hand-edit `api/generated/`.
-```
-
 ## Bundled resources
 
 - `scripts/lint_agents_md.py` — RUN in step 6 on the drafted file.
@@ -155,16 +136,20 @@ pnpm --filter dashboard test            # frontend — NEVER npm (breaks lockfil
 - `references/research-notes.md` — READ when a house rule is questioned;
   every claim above, with sources.
 
-## Improving this skill
+## Record the outcome
 
-Before executing, read `LEARNINGS.md` in this skill's folder — entries there
-override the instructions above. After use:
+Before the final response, record `ok`, `failed`, or `abandoned`:
 
-1. Append one line to `~/.agents/.manager/usage.jsonl` (create if missing):
-   `{"ts": "<ISO-8601>", "skill": "agents-md", "outcome": "ok" | "corrected"}`
-   — `corrected` when the user had to fix or redirect your use of this skill.
-2. If the user corrected you or the outcome surprised you, also append one
-   dated line to `LEARNINGS.md`:
-   `- YYYY-MM-DD: <what happened> → <what to do instead>`. Facts only, never
-   secrets. Do not edit SKILL.md directly — lessons are folded in
-   deliberately through a weekly reviewed PR.
+```powershell
+uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill agents-md --surface cursor --outcome ok
+```
+
+For a correction, record the closest category and one factual lesson:
+
+```powershell
+uv run "$HOME\.agents\manage.py" record-finish --invocation-id $skillInvocation --skill agents-md --surface cursor --outcome corrected --category instruction
+uv run "$HOME\.agents\manage.py" record-learning --invocation-id $skillInvocation --skill agents-md --surface cursor --category instruction --message "<what failed and what to do instead>"
+```
+
+Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
+Do not edit the runtime; the collector places the lesson in a reviewed PR.
