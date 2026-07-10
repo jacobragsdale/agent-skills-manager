@@ -38,9 +38,13 @@ reviewed like code.
 5. A maintainer aggregates those learnings on a review branch and decides what,
    if anything, should change in the skill.
 
-The two-repository design keeps permissions simple. Developer machines can read
-the skills repository but cannot push it. Each installation can push only its
-own `feedback/v1/<machine-id>` branch in the feedback repository.
+The two-repository design separates skill distribution from feedback writes.
+Developer machines can read the skills repository but cannot push it. The
+client publishes to `feedback/v1/<machine-id>`, but that branch name is routing,
+not an authorization boundary: unless the Git host is configured with narrower
+ACLs, a developer who can contribute feedback branches may also be able to read
+or update branches created by other installations. Treat every inbox branch as
+untrusted input.
 
 Runtime safety is strict: the configured path, origin, and branch must match,
 and the checkout must contain no tracked or untracked changes. Updates use a
@@ -75,8 +79,9 @@ local installation does not delete data already pushed.
 
 - Windows 11 x64 and Cursor;
 - read access to the protected skills repository;
-- permission to update one machine-specific branch in a separate feedback
-  repository;
+- permission to create and update feedback branches in a separate feedback
+  repository; the default design does not guarantee branch isolation between
+  installations;
 - an internal HTTPS location from which to serve the reviewed bootstrap script.
 
 Git, uv, Python, and administrator rights are not prerequisites. When needed,
@@ -87,8 +92,11 @@ managed Python runtime under `%LOCALAPPDATA%\AgentSkills`.
 
 1. Protect `main` in this repository. Developers should have read access but no
    direct contribution or policy-bypass permission.
-2. Create a separate feedback repository with an initialized `main`. Allow each
-   developer to create and update feedback branches, but protect `main`.
+2. Create a separate feedback repository with an initialized `main`. Allow
+   developers to create and update feedback branches, but protect `main`. Do
+   not assume the machine-ID branch name enforces ownership. If your Git host
+   supports narrower per-branch ACLs, configure and test them separately;
+   otherwise assume contributors can read or update other feedback branches.
 3. Set the repository defaults near the top of `bootstrap.ps1`:
 
 ```powershell

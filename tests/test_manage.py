@@ -127,6 +127,51 @@ class LearningSchemaTests(unittest.TestCase):
         with self.assertRaises(manage.FeedbackValidationError):
             manage.validate_learning(event)
 
+    def test_wrong_json_type_for_any_field_is_a_validation_error(self) -> None:
+        base_event = manage.make_learning_event(
+            machine_id=str(uuid.uuid4()),
+            skill_name="demo-skill",
+            skill_version="a" * 40,
+            correction_category="instruction",
+            message="Prefer the documented flag.",
+            now=dt.datetime.now(dt.timezone.utc),
+        )
+        wrong_values = {
+            "schema_version": [],
+            "event_id": [],
+            "recorded_at": [],
+            "machine_id": [],
+            "skill": [],
+            "category": [],
+            "message": [],
+        }
+
+        for field, wrong_value in wrong_values.items():
+            with self.subTest(field=field):
+                event = dict(base_event)
+                event[field] = wrong_value
+
+                with self.assertRaises(manage.FeedbackValidationError):
+                    manage.validate_learning(event)
+
+    def test_category_rejects_every_non_string_json_type(self) -> None:
+        base_event = manage.make_learning_event(
+            machine_id=str(uuid.uuid4()),
+            skill_name="demo-skill",
+            skill_version="a" * 40,
+            correction_category="instruction",
+            message="Prefer the documented flag.",
+            now=dt.datetime.now(dt.timezone.utc),
+        )
+
+        for value in (None, False, 1, 1.5, [], {}):
+            with self.subTest(value=value):
+                event = dict(base_event)
+                event["category"] = value
+
+                with self.assertRaises(manage.FeedbackValidationError):
+                    manage.validate_learning(event)
+
 
 class FeedbackStoreTests(unittest.TestCase):
     def test_invalid_file_is_quarantined(self) -> None:
@@ -161,6 +206,35 @@ class FeedbackStoreTests(unittest.TestCase):
 
             self.assertFalse(path.exists())
             self.assertEqual(list(paths.pending.glob("*.tmp")), [])
+
+    def test_malformed_event_is_quarantined_without_blocking_valid_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = manage.StatePaths(Path(tmp))
+            machine_id = str(uuid.uuid4())
+            valid = manage.make_learning_event(
+                machine_id=machine_id,
+                skill_name="demo-skill",
+                skill_version="b" * 40,
+                correction_category="instruction",
+                message="Prefer the documented flag.",
+                now=dt.datetime.now(dt.timezone.utc),
+            )
+            malformed = dict(valid)
+            malformed["event_id"] = str(uuid.uuid4())
+            malformed["category"] = []
+            paths.ensure()
+            malformed_path = paths.pending / f"{malformed['event_id']}.json"
+            malformed_path.write_text(json.dumps(malformed), encoding="utf-8")
+            manage.FeedbackStore(paths).write(valid)
+
+            events = manage.FeedbackStore(paths).load_pending()
+
+            self.assertEqual([event for _, event in events], [valid])
+            self.assertFalse(malformed_path.exists())
+            self.assertTrue((paths.quarantine / malformed_path.name).is_file())
+            reason_path = paths.quarantine / f"{malformed['event_id']}.reason.txt"
+            reason = reason_path.read_text(encoding="utf-8")
+            self.assertNotIn("[]", reason)
 
 
 class RuntimeSafetyTests(unittest.TestCase):
@@ -439,6 +513,55 @@ class FeedbackAggregationTests(unittest.TestCase):
                 target.read_text().count("Use the safe mode for this operation."),
                 1,
             )
+
+    def test_malformed_event_does_not_block_valid_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_remote = init_bare_remote(root, "skills")
+            inbox_remote = init_bare_remote(root, "inbox")
+            runtime = clone_runtime(root, skills_remote)
+            seed_skill(runtime)
+            machine_id = str(uuid.uuid4())
+            config = manage.ManagerConfig.new(
+                runtime,
+                str(skills_remote),
+                str(inbox_remote),
+                machine_id=machine_id,
+            )
+            paths = manage.StatePaths(root / "state")
+            valid = learning(config, runtime)
+            malformed = dict(valid)
+            malformed["event_id"] = "00000000-0000-4000-8000-000000000000"
+            malformed["category"] = []
+            attacker = clone_runtime(root, inbox_remote, "malformed-feedback")
+            branch = manage.feedback_branch(machine_id)
+            git(attacker, "checkout", "--orphan", branch)
+            git(attacker, "rm", "-rf", "--ignore-unmatch", ".")
+            learning_dir = attacker / "learnings"
+            learning_dir.mkdir(parents=True)
+            (learning_dir / f"{malformed['event_id']}.json").write_text(
+                json.dumps(malformed), encoding="utf-8"
+            )
+            (learning_dir / f"{valid['event_id']}.json").write_text(
+                json.dumps(valid), encoding="utf-8"
+            )
+            git(attacker, "config", "user.name", "Tests")
+            git(attacker, "config", "user.email", "tests@example.invalid")
+            git(attacker, "add", "learnings")
+            git(attacker, "commit", "-m", "add mixed feedback")
+            git(attacker, "push", "origin", f"HEAD:refs/heads/{branch}")
+
+            result = manage.aggregate_feedback(runtime, str(inbox_remote), paths)
+
+            self.assertEqual(result.accepted, 1)
+            self.assertEqual(result.rejected, 1)
+            learnings = runtime / "skills" / "demo-skill" / "LEARNINGS.md"
+            self.assertIn(valid["message"], learnings.read_text(encoding="utf-8"))
+            rejection = (runtime / "feedback" / "REJECTED.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("invalid correction category", rejection)
+            self.assertNotIn("[]", rejection)
 
 
 class OperationalTests(unittest.TestCase):

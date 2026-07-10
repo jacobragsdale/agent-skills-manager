@@ -397,6 +397,19 @@ def make_learning_event(
 
 
 def validate_learning(event: Any) -> None:
+    """Validate any JSON-shaped value without leaking built-in type errors."""
+
+    try:
+        _validate_learning_fields(event)
+    except FeedbackValidationError:
+        raise
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise FeedbackValidationError(
+            "learning contains invalid field types"
+        ) from exc
+
+
+def _validate_learning_fields(event: Any) -> None:
     if not isinstance(event, dict):
         raise FeedbackValidationError("learning must be a JSON object")
     expected = {
@@ -434,10 +447,9 @@ def validate_learning(event: Any) -> None:
         skill["version"]
     ):
         raise FeedbackValidationError(f"invalid skill version: {skill['version']!r}")
-    if event["category"] not in CORRECTION_CATEGORIES:
-        raise FeedbackValidationError(
-            f"invalid correction category: {event['category']!r}"
-        )
+    category = event["category"]
+    if not isinstance(category, str) or category not in CORRECTION_CATEGORIES:
+        raise FeedbackValidationError("invalid correction category")
     message = event["message"]
     if not isinstance(message, str) or not message.strip():
         raise FeedbackValidationError("learning message must be non-empty")
