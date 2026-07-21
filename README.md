@@ -1,6 +1,6 @@
-# Agent Skills Manager
+# Skillsync
 
-Agent Skills Manager gives an engineering team a shared, reviewable library of
+Skillsync gives an engineering team a shared, reviewable library of
 Cursor skills that stays current on every developer workstation. Developers get
 consistent help for common engineering tasks; managers get a controlled rollout
 through normal Git permissions and pull requests; maintainers get a small
