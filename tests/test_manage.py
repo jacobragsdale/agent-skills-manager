@@ -42,6 +42,111 @@ def clone_runtime(root: Path, remote: Path, name: str = "runtime") -> Path:
     return runtime
 
 
+def write_skill(root: Path, name: str) -> None:
+    skill = root / "skills" / name
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(
+        f'---\nname: {name}\ndescription: "Test skill."\n---\n\n# Test\n',
+        encoding="utf-8",
+    )
+    (skill / "LEARNINGS.md").write_text("# Learnings\n", encoding="utf-8")
+
+
+def write_sets(root: Path, sets_toml: str, skills: list[str] = []) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "sets.toml").write_text(sets_toml, encoding="utf-8")
+    for name in skills:
+        write_skill(root, name)
+    return root
+
+
+class SetResolutionTests(unittest.TestCase):
+    def test_child_set_resolves_to_union_root_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(
+                Path(tmp),
+                '[global]\nskills = ["base-a", "base-b"]\n'
+                '[team]\ninherits = "global"\nskills = ["team-a"]\n',
+                ["base-a", "base-b", "team-a"],
+            )
+
+            sets = manage.load_sets(root)
+            chain, skills = manage.resolve_set(sets, "team")
+
+            self.assertEqual(chain, ["global", "team"])
+            self.assertEqual(skills, ["base-a", "base-b", "team-a"])
+            self.assertEqual(manage.validate_sets(root), [])
+
+    def test_root_set_resolves_to_its_own_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(
+                Path(tmp),
+                '[global]\nskills = ["base-a"]\n',
+                ["base-a"],
+            )
+
+            chain, skills = manage.resolve_set(manage.load_sets(root), "global")
+
+            self.assertEqual(chain, ["global"])
+            self.assertEqual(skills, ["base-a"])
+
+    def test_unknown_set_and_unknown_parent_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(Path(tmp), '[global]\nskills = []\n')
+            sets = manage.load_sets(root)
+
+            with self.assertRaises(manage.ManagerError):
+                manage.resolve_set(sets, "nonexistent")
+
+            write_sets(
+                Path(tmp),
+                '[global]\nskills = []\n[team]\ninherits = "missing"\nskills = []\n',
+            )
+            with self.assertRaises(manage.ManagerError):
+                manage.load_sets(root)
+
+    def test_inheritance_cycle_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(
+                Path(tmp),
+                '[global]\nskills = []\n'
+                '[a]\ninherits = "b"\nskills = []\n'
+                '[b]\ninherits = "a"\nskills = []\n',
+            )
+
+            errors = manage.validate_sets(root)
+
+            self.assertTrue(any("cycle" in error for error in errors))
+
+    def test_exactly_one_root_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(
+                Path(tmp),
+                '[global]\nskills = []\n[second-root]\nskills = []\n',
+            )
+
+            with self.assertRaises(manage.ManagerError):
+                manage.load_sets(root)
+
+    def test_orphan_missing_and_double_listed_skills_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(
+                Path(tmp),
+                '[global]\nskills = ["listed-twice", "missing-dir"]\n'
+                '[team]\ninherits = "global"\nskills = ["listed-twice"]\n',
+                ["listed-twice", "orphan-skill"],
+            )
+
+            errors = "\n".join(manage.validate_sets(root))
+
+            self.assertIn("multiple sets", errors)
+            self.assertIn("missing skill: missing-dir", errors)
+            self.assertIn("'orphan-skill' is not listed in any set", errors)
+
+    def test_repo_sets_manifest_is_valid(self) -> None:
+        self.assertEqual(manage.validate_sets(manage.REPO_ROOT), [])
+
+
 class ConfigTests(unittest.TestCase):
     def test_config_round_trips_through_state_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

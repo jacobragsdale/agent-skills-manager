@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ CONFIG_VERSION = 2
 STATE_DIR_ENV = "AGENT_SKILLS_STATE_DIR"
 NET_TIMEOUT = 300
 VERSION_RE = re.compile(r"^[0-9a-f]{7,64}$")
+NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 REPO_ROOT = Path(__file__).resolve().parent
 
 
@@ -397,6 +399,116 @@ def sync_runtime(config: ManagerConfig) -> None:
         log(f"runtime: already current at {runtime_head(runtime)[:12]}")
 
 
+# Skill sets and inheritance
+
+
+def load_sets(repo_root: Path) -> dict[str, dict[str, Any]]:
+    """Parse and structurally validate sets.toml from a skills checkout."""
+
+    path = repo_root / "sets.toml"
+    if not path.is_file():
+        raise ManagerError(f"missing sets manifest: {path}")
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ManagerError(f"invalid sets.toml: {exc}") from exc
+    if not data:
+        raise ManagerError("sets.toml defines no sets")
+    roots = []
+    for name, table in data.items():
+        if not NAME_RE.fullmatch(name):
+            raise ManagerError(f"unsafe set name: {name!r}")
+        if not isinstance(table, dict):
+            raise ManagerError(f"set {name!r} must be a TOML table")
+        unknown = set(table) - {"inherits", "skills"}
+        if unknown:
+            raise ManagerError(
+                f"set {name!r} has unknown keys: {', '.join(sorted(unknown))}"
+            )
+        skills = table.get("skills")
+        if not isinstance(skills, list) or not all(
+            isinstance(skill, str) and NAME_RE.fullmatch(skill) for skill in skills
+        ):
+            raise ManagerError(
+                f"set {name!r} needs a skills list of kebab-case names"
+            )
+        if len(set(skills)) != len(skills):
+            raise ManagerError(f"set {name!r} lists a skill twice")
+        parent = table.get("inherits")
+        if parent is None:
+            roots.append(name)
+        elif not isinstance(parent, str) or parent not in data:
+            raise ManagerError(f"set {name!r} inherits unknown set {parent!r}")
+    if len(roots) != 1:
+        raise ManagerError(
+            f"sets.toml must define exactly one root set without 'inherits' "
+            f"(found {len(roots)})"
+        )
+    return data
+
+
+def resolve_set(
+    sets: dict[str, dict[str, Any]], name: str
+) -> tuple[list[str], list[str]]:
+    """Return (inheritance chain root-first, ordered union of skills)."""
+
+    if name not in sets:
+        raise ManagerError(
+            f"unknown skill set {name!r}; available: {', '.join(sorted(sets))}"
+        )
+    chain: list[str] = []
+    current: str | None = name
+    while current is not None:
+        if current in chain:
+            raise ManagerError(f"set inheritance cycle at {current!r}")
+        chain.append(current)
+        current = sets[current].get("inherits")
+    chain.reverse()
+    skills: list[str] = []
+    for set_name in chain:
+        for skill in sets[set_name]["skills"]:
+            if skill in skills:
+                raise ManagerError(
+                    f"skill {skill!r} appears twice on the {name!r} chain"
+                )
+            skills.append(skill)
+    return chain, skills
+
+
+def validate_sets(repo_root: Path) -> list[str]:
+    """Return every structural problem with sets.toml and the skills tree."""
+
+    try:
+        sets = load_sets(repo_root)
+    except ManagerError as exc:
+        return [str(exc)]
+    errors: list[str] = []
+    owners: dict[str, list[str]] = {}
+    for name, table in sets.items():
+        for skill in table["skills"]:
+            owners.setdefault(skill, []).append(name)
+    for skill, names in sorted(owners.items()):
+        if len(names) > 1:
+            errors.append(
+                f"skill {skill!r} is listed in multiple sets: {', '.join(names)}"
+            )
+        if not (repo_root / "skills" / skill / "SKILL.md").is_file():
+            errors.append(f"set {names[0]!r} lists missing skill: {skill}")
+    skills_dir = repo_root / "skills"
+    if skills_dir.is_dir():
+        for entry in sorted(skills_dir.iterdir()):
+            if entry.is_dir() and entry.name not in owners:
+                errors.append(
+                    f"skill directory {entry.name!r} is not listed in any set"
+                )
+    for name in sets:
+        try:
+            resolve_set(sets, name)
+        except ManagerError as exc:
+            errors.append(str(exc))
+    return errors
+
+
 # Command handlers
 
 
@@ -477,6 +589,20 @@ def nightly_command(args: argparse.Namespace) -> None:
         raise ManagerError(f"sync: {exc}") from exc
 
 
+def validate_sets_command(args: argparse.Namespace) -> None:
+    repo_root = Path(args.repo_root).expanduser().resolve()
+    errors = validate_sets(repo_root)
+    if errors:
+        for error in errors:
+            log(f"sets: {error}")
+        raise ManagerError(f"sets validation failed with {len(errors)} error(s)")
+    sets = load_sets(repo_root)
+    for name in sorted(sets):
+        _, skills = resolve_set(sets, name)
+        log(f"sets: {name} -> {', '.join(skills) or '(no skills)'}")
+    log(f"sets: {len(sets)} set(s) valid")
+
+
 def _add_state_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--state-dir",
@@ -517,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_state_arg(nightly)
     nightly.set_defaults(handler=nightly_command)
+
+    validate = subparsers.add_parser(
+        "validate-sets", help="check sets.toml and the skills tree for conflicts"
+    )
+    validate.add_argument("--repo-root", default=str(REPO_ROOT))
+    validate.set_defaults(handler=validate_sets_command)
 
     return parser
 

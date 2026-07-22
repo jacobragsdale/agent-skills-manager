@@ -1,0 +1,10 @@
+# Skill sets. Each machine subscribes to exactly one set at install time and
+# receives that set's skills plus everything inherited up the chain.
+#
+# Rules (enforced by `manage.py validate-sets` in CI):
+# - exactly one root set has no `inherits`; every other set names its parent;
+# - inheritance is a tree: one parent per set, no cycles;
+# - every skill directory under skills/ is listed in exactly one set.
+
+[global]
+skills = ["agents-md", "python-standards"]
