@@ -129,15 +129,11 @@ file — comments are stripped before models see it):
 - `references/research-notes.md` — READ when a house rule is questioned;
   every claim above, with sources.
 
-## Record a factual correction
+## Report a factual correction
 
-If the user corrected this skill's instructions or trigger behavior, queue one
-short factual lesson for maintainer review:
-
-```powershell
-& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" record-learning --skill agents-md --category instruction --message "<what failed and what to do instead>"
-```
-
-Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
-Feedback failure must not block the task. Do not edit the runtime; a maintainer
-folds queued lessons into a reviewed pull request.
+If the user corrected this skill's instructions or trigger behavior, restate
+the lesson as one factual line ("<what failed and what to do instead>") and
+tell the user to pass it to the skill maintainer, who adds it to this skill's
+`LEARNINGS.md` through a normal pull request. Never include secrets, prompts,
+code, paths, usernames, or hostnames in the lesson. Do not edit the runtime
+checkout yourself.

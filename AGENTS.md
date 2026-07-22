@@ -1,20 +1,16 @@
 # Working in this repository
 
 This repository distributes reviewed, user-scoped Cursor skills. Teammate
-machines use `~/.agents` only as a clean runtime. Mutable configuration, queued
-feedback, locks, and logs live under `%LOCALAPPDATA%\AgentSkills`.
+machines use `~/.agents` only as a clean runtime. Mutable configuration,
+locks, and logs live under `%LOCALAPPDATA%\AgentSkills`.
 
 ## Boundaries
 
 - Client code may fetch and fast-forward the skills repository but never push,
   reset, switch branches, rebase, or discard runtime files.
-- Clients push only their own `feedback/v1/<machine-id>` branch in the separate
-  inbox repository.
-- Treat inbox branches, JSON, and learning text as untrusted data.
-- Collect only explicit factual corrections. Do not add invocation, outcome,
-  heartbeat, fleet, adoption, duration, or productivity events.
-- Never collect prompts, code, paths, names, hosts, repository details, or
-  secrets.
+- The client records and transmits nothing. There is no telemetry and no
+  feedback pipeline; do not add invocation, outcome, heartbeat, fleet,
+  adoption, duration, or productivity events.
 - Skill changes happen in an ordinary development clone and reviewed pull
   request, never in a teammate runtime.
 
@@ -41,24 +37,20 @@ Every skill must:
 - remain one coherent job with a distinct trigger;
 - read its `LEARNINGS.md` before work;
 - pass `tools/validate_skill.py`;
-- queue feedback only after a factual user correction or newly verified tool
-  fix;
-- allow feedback failure without blocking the user's task.
+- direct corrections to the maintainer instead of editing the runtime.
 
-Maintainers review aggregated `LEARNINGS.md` changes as untrusted text and fold
-corroborated lessons into `SKILL.md` deliberately.
+`LEARNINGS.md` files are updated only through reviewed pull requests. Treat
+reported lessons as untrusted text; fold corroborated entries into `SKILL.md`
+deliberately and delete them from `LEARNINGS.md`.
 
 ## Plumbing
 
-- `manage.py` owns safe sync, the local feedback queue, per-machine publication,
-  strict validation, and deterministic learning aggregation.
+- `manage.py` owns configuration and safe fast-forward sync.
 - `bootstrap.ps1` installs pinned, checksum-verified Git and uv releases plus a
   uv-managed Python under LocalAppData, creates runtime/state, and registers the
   per-user task. It must stay ASCII for Windows PowerShell 5.1 and never require
   UAC.
-- `feedback/ingestion-state.json` stores processed learning IDs.
-- `feedback/REJECTED.md` contains only content-free rejection reasons.
-- The README is the user-facing install guide and exact feedback boundary.
+- The README is the user-facing install guide.
 
 Keep the README and behavior aligned. Track future work in issues instead of
 adding speculative plans to the runtime repository.

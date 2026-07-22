@@ -1,16 +1,14 @@
 # bootstrap.ps1 - install the team Agent Skills runtime for a Windows 11 user.
 #
-# Maintainers set $DefaultRepoUrl and $DefaultInboxRepoUrl before publishing
-# this script. Members then run one command:
+# Maintainers set $DefaultRepoUrl before publishing this script. Members then
+# run one command:
 #
 #   irm https://<internal-host>/bootstrap.ps1 | iex
 #
 # The skills clone at %USERPROFILE%\.agents is runtime-only. All mutable state
-# (feedback, logs, config, locks, and the local inbox clone) lives under
-# %LOCALAPPDATA%\AgentSkills. The nightly task publishes only explicit factual
-# corrections to this machine's inbox branch and fast-forwards a clean runtime;
-# it never resets or
-# pushes the skills repository.
+# (logs, config, and locks) lives under %LOCALAPPDATA%\AgentSkills. The nightly
+# task fast-forwards a clean runtime; it never resets or pushes the skills
+# repository.
 #
 # This file stays ASCII because Windows PowerShell 5.1 reads BOM-less scripts
 # fetched over HTTP as ANSI.
@@ -19,13 +17,11 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = '',
-    [string]$InboxRepoUrl = '',
     [string]$TaskTime = '02:00'
 )
 
-# Set both before publishing the installer.
+# Set before publishing the installer.
 $DefaultRepoUrl = ''
-$DefaultInboxRepoUrl = ''
 
 $ErrorActionPreference = 'Stop'
 $RuntimeDir = Join-Path $HOME '.agents'
@@ -210,7 +206,7 @@ function Register-NightlyTask([string]$Command) {
     $folder = $service.GetFolder('\')
     $definition = $service.NewTask(0)
     $definition.RegistrationInfo.Description = `
-        'Publishes Agent Skills feedback and safely fast-forwards the runtime.'
+        'Safely fast-forwards the Agent Skills runtime.'
     $definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
     $definition.Principal.RunLevel = 0  # TASK_RUNLEVEL_LUA
     $definition.Settings.Enabled = $true
@@ -243,7 +239,7 @@ function Register-NightlyTask([string]$Command) {
 
 Write-Host ''
 Write-Host 'Team Agent Skills setup' -ForegroundColor Green
-Write-Host '  Installs a read-only Cursor skill runtime and a small feedback queue.'
+Write-Host '  Installs a read-only Cursor skill runtime.'
 Write-Host '  Runs entirely as the current user; no administrator prompt is required.'
 Write-Host '  Expect one corporate sign-in window when private repositories need authentication.'
 
@@ -256,22 +252,16 @@ $uvPath = (Get-Command uv).Source
 Install-Python $uvPath
 $pythonPath = $script:AgentSkillsPython
 
-Write-Step 'Resolving the two repositories'
+Write-Step 'Resolving the skills repository'
 if (-not $RepoUrl) { $RepoUrl = $env:AGENT_SKILLS_REPO_URL }
 if (-not $RepoUrl) { $RepoUrl = $DefaultRepoUrl }
 if (-not $RepoUrl -and $PSScriptRoot) {
     try { $RepoUrl = (git -C $PSScriptRoot remote get-url origin 2>$null) } catch { $RepoUrl = '' }
 }
-if (-not $InboxRepoUrl) { $InboxRepoUrl = $env:AGENT_SKILLS_INBOX_URL }
-if (-not $InboxRepoUrl) { $InboxRepoUrl = $DefaultInboxRepoUrl }
 if (-not $RepoUrl) {
     throw 'No skills repo URL. Pass -RepoUrl, set AGENT_SKILLS_REPO_URL, or configure $DefaultRepoUrl.'
 }
-if (-not $InboxRepoUrl) {
-    throw 'No inbox repo URL. Pass -InboxRepoUrl, set AGENT_SKILLS_INBOX_URL, or configure $DefaultInboxRepoUrl.'
-}
 Write-Note "Skills (read-only): $RepoUrl"
-Write-Note "Inbox (machine branches): $InboxRepoUrl"
 Write-Note "Runtime: $RuntimeDir"
 Write-Note "Local state: $StateDir"
 
@@ -291,15 +281,13 @@ if (Test-Path (Join-Path $RuntimeDir '.git')) {
 }
 git -C $RuntimeDir fetch origin
 if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the skills repository.' }
-git ls-remote --heads $InboxRepoUrl | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Could not authenticate to the inbox repository.' }
 
 Write-Step 'Configuring isolated local state'
 New-Item -ItemType Directory -Force -Path (Join-Path $StateDir 'logs') | Out-Null
 Push-Location $RuntimeDir
 try {
     & $pythonPath manage.py configure --runtime-path $RuntimeDir --repo-url $RepoUrl `
-        --inbox-repo-url $InboxRepoUrl --branch main --state-dir $StateDir
+        --branch main --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { throw 'Manager configuration failed.' }
 } finally {
     Pop-Location

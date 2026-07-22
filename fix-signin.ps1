@@ -1,4 +1,4 @@
-# Refresh Git Credential Manager sign-in for both Agent Skills repositories.
+# Refresh Git Credential Manager sign-in for the Agent Skills repository.
 # This file stays ASCII for Windows PowerShell 5.1.
 
 #Requires -Version 5.1
@@ -13,7 +13,7 @@ if (-not (Test-Path $configPath -PathType Leaf)) {
 }
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
-if (-not $config.runtime_path -or -not $config.inbox_repo_url) {
+if (-not $config.runtime_path) {
     throw "Agent Skills configuration is incomplete: $configPath"
 }
 
@@ -23,10 +23,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Skills repository authentication failed (Git exit $LASTEXITCODE)."
 }
 
-Write-Host 'Checking the feedback inbox repository...'
-& git ls-remote --heads $config.inbox_repo_url | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "Inbox repository authentication failed (Git exit $LASTEXITCODE)."
-}
-
-Write-Host 'Both repositories are reachable.' -ForegroundColor Green
+Write-Host 'The skills repository is reachable.' -ForegroundColor Green

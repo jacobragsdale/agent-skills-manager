@@ -60,9 +60,9 @@ it — read it line by line.
 Run until clean, fixing ONE error at a time: `uv sync` → on failure READ
 `references/troubleshooting.md` and match the error signature → apply the
 fix in `pyproject.toml` (or `.env.example` for env-var fixes) → repeat.
-If you solve an error NOT in the playbook, retain it as an `environment` or
-`tool-drift` learning for maintainer review — that is how this skill learns
-without mutating the runtime. Verify from zero: remove `.venv` with the
+If you solve an error NOT in the playbook, report the fix to the user so a
+maintainer can add it to the playbook through a pull request — that is how
+this skill learns without mutating the runtime. Verify from zero: remove `.venv` with the
 platform-appropriate filesystem command, then run `uv sync` and
 `uv run python -c "import <top_level_package>"`.
 
@@ -122,19 +122,15 @@ env-fiddling get deleted. List them in a README "Running" table.
 
 - `scripts/audit_repo.py` — RUN first on any brownfield repo.
 - `scripts/triage.py` — RUN for every type check; never bare basedpyright.
-- `references/troubleshooting.md` — READ at the first `uv sync` failure; record newly solved errors as learnings for maintainer review.
+- `references/troubleshooting.md` — READ at the first `uv sync` failure; report newly solved errors so a maintainer can extend it.
 - `references/precommit-and-lint.md` — READ in step 4; copy templates.
 - `references/rules.md` — READ for uncovered diagnostic rules and baseline mechanics.
 
-## Record a factual correction
+## Report a factual correction
 
-For a user correction or a new `uv sync` fix, queue the closest category and
-one factual lesson; a maintainer decides whether it belongs in the playbook:
-
-```powershell
-& $env:AGENT_SKILLS_PYTHON "$HOME\.agents\manage.py" record-learning --skill python-standards --category tool-drift --message "<what failed and what to do instead>"
-```
-
-Never put secrets, prompts, code, paths, usernames, or hostnames in a learning.
-Feedback failure must not block the task. Do not edit the runtime; a maintainer
-folds queued lessons into a reviewed pull request.
+For a user correction or a new `uv sync` fix, restate the lesson as one
+factual line ("<what failed and what to do instead>") and tell the user to
+pass it to the skill maintainer, who decides whether it belongs in
+`LEARNINGS.md` or the playbook and lands it through a normal pull request.
+Never include secrets, prompts, code, paths, usernames, or hostnames in the
+lesson. Do not edit the runtime checkout yourself.

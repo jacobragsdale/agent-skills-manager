@@ -1,6 +1,6 @@
 @echo off
-rem Refresh Git Credential Manager sign-in for both Agent Skills repositories.
-echo Re-authenticating the Agent Skills runtime and feedback inbox...
+rem Refresh Git Credential Manager sign-in for the Agent Skills repository.
+echo Re-authenticating the Agent Skills runtime...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fix-signin.ps1"
 set "result=%errorlevel%"
 if %result%==0 (

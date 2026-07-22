@@ -5,9 +5,8 @@ Match the error output against the signatures below, apply the fix, re-run
 a shell script or a manual install.
 
 **This file is meant to grow through reviewed changes.** When you solve an
-error that isn't listed, record an `environment` or `tool-drift` learning
-through `manage.py`. A maintainer can add an entry in this format through a
-normal pull request:
+error that isn't listed, report it to the user so a maintainer can add an
+entry in this format through a normal pull request:
 
 ```markdown
 ## <short name> — YYYY-MM-DD
