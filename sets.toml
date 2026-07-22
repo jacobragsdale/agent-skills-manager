@@ -6,5 +6,13 @@
 # - inheritance is a tree: one parent per set, no cycles;
 # - every skill directory under skills/ is listed in exactly one set.
 
+# Every machine gets the root set's skills. Language- and team-specific
+# skills live in child sets; machines opt in at install time with
+# `bootstrap.ps1 -SkillSet <name>`.
+
 [global]
-skills = ["agents-md", "python-standards"]
+skills = ["agents-md"]
+
+[python]
+inherits = "global"
+skills = ["python-standards"]
