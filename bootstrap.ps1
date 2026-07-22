@@ -337,5 +337,5 @@ if (-not $healthy) {
 Write-Host "All set (took ${elapsed}s). Cursor can now discover the team skills." -ForegroundColor Green
 Write-Host "  Skills view: $ViewDir (skill set '$SkillSet')"
 Write-Host "  Runtime clone, state, and logs: $StateDir"
-Write-Host '  Repair expired sign-in: double-click fix-signin.cmd in your .agents folder.'
+Write-Host "  Repair expired sign-in: git -C '$RuntimeDir' fetch"
 Write-Host '  Try: open Cursor and ask "set up this Python repo to our standards".'

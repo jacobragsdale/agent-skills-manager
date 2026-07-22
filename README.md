@@ -79,7 +79,6 @@ chain.
   skills\<subscribed skills only>
   installed.json                      set, chain, skills, source Git SHA
   .agent-skills-managed               marker: safe for the manager to replace
-  fix-signin.cmd                      double-click to repair Git sign-in
 ```
 
 Nightly, the manager: validates the clone (right path, origin, branch, no
@@ -153,9 +152,12 @@ No routine developer action is required. `AgentSkillsNightly` updates the
 clone and rebuilds the view. Failures are written to
 `%LOCALAPPDATA%\AgentSkills\logs\task.log`, and the process exits nonzero.
 
-If Git authentication expires, double-click `fix-signin.cmd` in
-`%USERPROFILE%\.agents`. It reopens the normal Git Credential Manager sign-in
-flow without replacing local state.
+If Git authentication expires, run one fetch to reopen the normal Git
+Credential Manager sign-in flow:
+
+```powershell
+git -C "$env:LOCALAPPDATA\AgentSkills\repo" fetch
+```
 
 Useful maintenance commands use the installed interpreter:
 
@@ -237,6 +239,5 @@ sets.toml     skill sets and their inheritance tree
 skills/       reviewed skills, references, and their required helper scripts
 manage.py     safe runtime updater, set resolver, and view materializer
 bootstrap.ps1 per-user Windows installer and task registration
-fix-signin.*  interactive Git Credential Manager recovery
 tests/        real-Git integration tests for manager behavior
 ```
