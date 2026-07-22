@@ -7,9 +7,8 @@
 #
 # The skills repository is cloned under %LOCALAPPDATA%\AgentSkills\repo and
 # treated as internal state. %USERPROFILE%\.agents is a generated view holding
-# only the skills of this machine's subscribed skill set; Cursor reads it and
-# the nightly sync rebuilds it. The nightly task fast-forwards a clean clone;
-# it never resets or pushes the skills repository.
+# every skill in the repository. The nightly task pulls updates and rebuilds
+# that view; it never resets or pushes the skills repository.
 #
 # This file stays ASCII because Windows PowerShell 5.1 reads BOM-less scripts
 # fetched over HTTP as ANSI.
@@ -18,7 +17,6 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = '',
-    [string]$SkillSet = 'global',
     [string]$TaskTime = '02:00'
 )
 
@@ -210,7 +208,7 @@ function Register-NightlyTask([string]$Command) {
     $folder = $service.GetFolder('\')
     $definition = $service.NewTask(0)
     $definition.RegistrationInfo.Description = `
-        'Safely fast-forwards the Agent Skills runtime.'
+        'Pulls Agent Skills updates and rebuilds the Cursor view.'
     $definition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
     $definition.Principal.RunLevel = 0  # TASK_RUNLEVEL_LUA
     $definition.Settings.Enabled = $true
@@ -266,7 +264,6 @@ if (-not $RepoUrl) {
     throw 'No skills repo URL. Pass -RepoUrl, set AGENT_SKILLS_REPO_URL, or configure $DefaultRepoUrl.'
 }
 Write-Note "Skills (read-only): $RepoUrl"
-Write-Note "Skill set: $SkillSet"
 Write-Note "Runtime clone: $RuntimeDir"
 Write-Note "Skills view (Cursor reads this): $ViewDir"
 
@@ -299,7 +296,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $StateDir 'logs') | Out-Nul
 Push-Location $RuntimeDir
 try {
     & $pythonPath manage.py configure --runtime-path $RuntimeDir --repo-url $RepoUrl `
-        --view-path $ViewDir --skill-set $SkillSet --branch main --state-dir $StateDir
+        --view-path $ViewDir --branch main --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { throw 'Manager configuration failed.' }
 } finally {
     Pop-Location
@@ -335,7 +332,7 @@ if (-not $healthy) {
     exit 1
 }
 Write-Host "All set (took ${elapsed}s). Cursor can now discover the team skills." -ForegroundColor Green
-Write-Host "  Skills view: $ViewDir (skill set '$SkillSet')"
+Write-Host "  Skills view: $ViewDir"
 Write-Host "  Runtime clone, state, and logs: $StateDir"
 Write-Host "  Repair expired sign-in: git -C '$RuntimeDir' fetch"
 Write-Host '  Try: open Cursor and ask "set up this Python repo to our standards".'

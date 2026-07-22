@@ -49,122 +49,55 @@ def write_skill(root: Path, name: str) -> None:
         f'---\nname: {name}\ndescription: "Test skill."\n---\n\n# Test\n',
         encoding="utf-8",
     )
-    (skill / "LEARNINGS.md").write_text("# Learnings\n", encoding="utf-8")
 
 
-def write_sets(root: Path, sets_toml: str, skills: tuple[str, ...] = ()) -> Path:
+def write_pack(root: Path, skills: tuple[str, ...]) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "sets.toml").write_text(sets_toml, encoding="utf-8")
     for name in skills:
         write_skill(root, name)
     return root
 
 
-class SetResolutionTests(unittest.TestCase):
-    def test_child_set_resolves_to_union_root_first(self) -> None:
+class FlatPackTests(unittest.TestCase):
+    def test_every_skill_directory_is_returned_in_stable_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(
-                Path(tmp),
-                '[global]\nskills = ["base-a", "base-b"]\n'
-                '[team]\ninherits = "global"\nskills = ["team-a"]\n',
-                ("base-a", "base-b", "team-a"),
-            )
+            root = write_pack(Path(tmp), ("python-standards", "agents-md"))
 
-            sets = manage.load_sets(root)
-            chain, skills = manage.resolve_set(sets, "team")
+            skills = manage.list_skills(root)
 
-            self.assertEqual(chain, ["global", "team"])
-            self.assertEqual(skills, ["base-a", "base-b", "team-a"])
-            self.assertEqual(manage.validate_sets(root), [])
+            self.assertEqual(skills, ["agents-md", "python-standards"])
+            self.assertEqual(manage.validate_skills(root), [])
 
-    def test_root_set_resolves_to_its_own_skills(self) -> None:
+    def test_missing_or_malformed_skill_files_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(
-                Path(tmp),
-                '[global]\nskills = ["base-a"]\n',
-                ("base-a",),
-            )
-
-            chain, skills = manage.resolve_set(manage.load_sets(root), "global")
-
-            self.assertEqual(chain, ["global"])
-            self.assertEqual(skills, ["base-a"])
-
-    def test_unknown_set_and_unknown_parent_are_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(Path(tmp), '[global]\nskills = []\n')
-            sets = manage.load_sets(root)
-
-            with self.assertRaises(manage.ManagerError):
-                manage.resolve_set(sets, "nonexistent")
-
-            write_sets(
-                Path(tmp),
-                '[global]\nskills = []\n[team]\ninherits = "missing"\nskills = []\n',
-            )
-            with self.assertRaises(manage.ManagerError):
-                manage.load_sets(root)
-
-    def test_inheritance_cycle_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(
-                Path(tmp),
-                '[global]\nskills = []\n'
-                '[a]\ninherits = "b"\nskills = []\n'
-                '[b]\ninherits = "a"\nskills = []\n',
-            )
-
-            errors = manage.validate_sets(root)
-
-            self.assertTrue(any("cycle" in error for error in errors))
-
-    def test_exactly_one_root_is_required(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(
-                Path(tmp),
-                '[global]\nskills = []\n[second-root]\nskills = []\n',
-            )
-
-            with self.assertRaises(manage.ManagerError):
-                manage.load_sets(root)
-
-    def test_orphan_missing_and_double_listed_skills_are_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(
-                Path(tmp),
-                '[global]\nskills = ["listed-twice", "missing-dir"]\n'
-                '[team]\ninherits = "global"\nskills = ["listed-twice"]\n',
-                ("listed-twice", "orphan-skill"),
-            )
-
-            errors = "\n".join(manage.validate_sets(root))
-
-            self.assertIn("multiple sets", errors)
-            self.assertIn("missing skill: missing-dir", errors)
-            self.assertIn("'orphan-skill' is not listed in any set", errors)
-
-    def test_malformed_skill_folders_are_reported(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = write_sets(Path(tmp), '[global]\nskills = ["bad-skill"]\n')
-            skill = root / "skills" / "bad-skill"
-            skill.mkdir(parents=True)
-            (skill / "SKILL.md").write_text(
-                "---\nname: wrong-name\n---\n\n# No description\n",
+            root = write_pack(Path(tmp), ("missing-skill", "wrong-skill"))
+            (root / "skills" / "missing-skill" / "SKILL.md").unlink()
+            (root / "skills" / "wrong-skill" / "SKILL.md").write_text(
+                "---\nname: another-name\n---\n\n# No description\n",
                 encoding="utf-8",
             )
 
-            errors = "\n".join(manage.validate_sets(root))
+            errors = "\n".join(manage.validate_skills(root))
 
+            self.assertIn("missing SKILL.md", errors)
             self.assertIn("must match the folder name", errors)
             self.assertIn("needs a description", errors)
-            self.assertIn("missing LEARNINGS.md", errors)
 
-    def test_repo_sets_manifest_is_valid(self) -> None:
-        self.assertEqual(manage.validate_sets(manage.REPO_ROOT), [])
+    def test_pack_rejects_non_skill_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_pack(Path(tmp), ("valid-skill",))
+            (root / "skills" / "README.md").write_text("unexpected\n")
+
+            errors = manage.validate_skills(root)
+
+            self.assertEqual(errors, ["unexpected file in skills directory: README.md"])
+
+    def test_repo_skill_pack_is_valid(self) -> None:
+        self.assertEqual(manage.validate_skills(manage.REPO_ROOT), [])
 
 
 class ConfigTests(unittest.TestCase):
-    def test_config_round_trips_through_state_dir(self) -> None:
+    def test_config_round_trips_with_only_runtime_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -176,20 +109,30 @@ class ConfigTests(unittest.TestCase):
             loaded = manage.ManagerConfig.load(paths)
 
             self.assertEqual(loaded, config)
+            saved = json.loads(paths.config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(saved),
+                {
+                    "branch",
+                    "runtime_path",
+                    "runtime_repo_url",
+                    "schema_version",
+                    "view_path",
+                },
+            )
 
-    def test_outdated_v1_config_is_rejected_with_reconfigure_hint(self) -> None:
+    def test_previous_config_schema_is_rejected_with_reconfigure_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = manage.StatePaths(Path(tmp))
             paths.ensure()
             paths.config.write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
-                        "runtime_path": "/somewhere/.agents",
+                        "schema_version": 3,
+                        "runtime_path": "/somewhere/repo",
                         "runtime_repo_url": "https://example.invalid/skills",
-                        "inbox_repo_url": "https://example.invalid/inbox",
                         "branch": "main",
-                        "machine_id": "00000000-0000-4000-8000-000000000000",
+                        "view_path": "/somewhere/view",
                     }
                 ),
                 encoding="utf-8",
@@ -206,7 +149,6 @@ class ConfigTests(unittest.TestCase):
             runtime_repo_url="https://example.invalid/skills",
             branch="../evil",
             view_path="/somewhere/view",
-            skill_set="global",
         )
 
         with self.assertRaises(manage.ManagerError):
@@ -220,7 +162,6 @@ class ConfigTests(unittest.TestCase):
                     runtime_repo_url="https://example.invalid/skills",
                     branch="main",
                     view_path=view,
-                    skill_set="global",
                 )
 
                 with self.assertRaises(manage.ManagerError):
@@ -301,35 +242,38 @@ class RuntimeSafetyTests(unittest.TestCase):
             )
 
 
-TEAM_SETS = (
-    '[global]\nskills = ["base-a"]\n'
-    '[team]\ninherits = "global"\nskills = ["team-a"]\n'
-)
-
-
-def publish(root: Path, remote: Path, label: str, sets_toml: str,
-            skills: tuple[str, ...]) -> None:
+def publish(root: Path, remote: Path, label: str, skills: tuple[str, ...]) -> None:
     work = root / label
     git(root, "clone", str(remote), str(work))
     git(work, "config", "user.name", "Tests")
     git(work, "config", "user.email", "tests@example.invalid")
-    write_sets(work, sets_toml, skills)
+    write_pack(work, skills)
+    git(work, "add", "-A")
+    git(work, "commit", "-m", f"publish {label}")
+    git(work, "push", "origin", "main")
+
+
+def publish_broken_skill(root: Path, remote: Path, label: str) -> None:
+    work = root / label
+    git(root, "clone", str(remote), str(work))
+    git(work, "config", "user.name", "Tests")
+    git(work, "config", "user.email", "tests@example.invalid")
+    (work / "skills" / "broken-skill").mkdir(parents=True)
+    (work / "skills" / "broken-skill" / "notes.txt").write_text("not a skill\n")
     git(work, "add", "-A")
     git(work, "commit", "-m", f"publish {label}")
     git(work, "push", "origin", "main")
 
 
 class MaterializeTests(unittest.TestCase):
-    def test_child_subscription_materializes_inherited_union(self) -> None:
+    def test_materialize_copies_every_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
-            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            publish(root, remote, "pack", ("base-a", "team-a"))
             runtime = clone_runtime(root, remote)
             view = root / "view"
-            config = manage.ManagerConfig.new(
-                runtime, str(remote), view, skill_set="team"
-            )
+            config = manage.ManagerConfig.new(runtime, str(remote), view)
 
             manage.materialize_view(config)
 
@@ -339,8 +283,6 @@ class MaterializeTests(unittest.TestCase):
             installed = json.loads(
                 (view / "installed.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(installed["set"], "team")
-            self.assertEqual(installed["chain"], ["global", "team"])
             self.assertEqual(installed["skills"], ["base-a", "team-a"])
             self.assertEqual(
                 installed["source_sha"],
@@ -351,64 +293,57 @@ class MaterializeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
-            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            publish(root, remote, "pack", ("base-a",))
             runtime = clone_runtime(root, remote)
             view = root / "view"
             paths = manage.StatePaths(root / "state")
-            config = manage.ManagerConfig.new(
-                runtime, str(remote), view, skill_set="team"
-            )
+            config = manage.ManagerConfig.new(runtime, str(remote), view)
             config.save(paths)
             args = type("Args", (), {"state_dir": str(paths.root)})()
 
             manage.sync_command(args)
             self.assertFalse((view / "skills" / "base-b").exists())
 
-            updated = TEAM_SETS.replace('["base-a"]', '["base-a", "base-b"]')
-            publish(root, remote, "update", updated, ("base-b",))
+            publish(root, remote, "update", ("base-b",))
             manage.sync_command(args)
 
             self.assertTrue((view / "skills" / "base-b" / "SKILL.md").is_file())
             installed = json.loads(
                 (view / "installed.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(installed["skills"], ["base-a", "base-b", "team-a"])
+            self.assertEqual(installed["skills"], ["base-a", "base-b"])
 
     def test_unmanaged_view_directory_is_never_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
-            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            publish(root, remote, "pack", ("base-a",))
             runtime = clone_runtime(root, remote)
             view = root / "view"
             view.mkdir()
             precious = view / "notes.txt"
             precious.write_text("mine\n", encoding="utf-8")
-            config = manage.ManagerConfig.new(
-                runtime, str(remote), view, skill_set="team"
-            )
+            config = manage.ManagerConfig.new(runtime, str(remote), view)
 
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.materialize_view(config)
 
             self.assertEqual(precious.read_text(), "mine\n")
 
-    def test_broken_manifest_preserves_previous_view(self) -> None:
+    def test_broken_skill_preserves_previous_view(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
-            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            publish(root, remote, "pack", ("base-a",))
             runtime = clone_runtime(root, remote)
             view = root / "view"
-            config = manage.ManagerConfig.new(
-                runtime, str(remote), view, skill_set="team"
-            )
+            config = manage.ManagerConfig.new(runtime, str(remote), view)
             manage.materialize_view(config)
             snapshot = json.loads(
                 (view / "installed.json").read_text(encoding="utf-8")
             )
 
-            publish(root, remote, "break", "not valid toml [", ())
+            publish_broken_skill(root, remote, "break")
             manage.sync_runtime(config)
             with self.assertRaises(manage.ManagerError):
                 manage.materialize_view(config)
@@ -440,6 +375,7 @@ class OperationalTests(unittest.TestCase):
     def test_second_process_lock_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock_path = Path(tmp) / "nightly.lock"
+
             with manage.ProcessLock(lock_path):
                 with self.assertRaises(manage.LockBusyError):
                     with manage.ProcessLock(lock_path):
@@ -452,6 +388,7 @@ class OperationalTests(unittest.TestCase):
             stdout="",
             stderr="fatal: Authentication failed for remote",
         )
+
         self.assertTrue(manage.is_auth_failure(proc))
 
 

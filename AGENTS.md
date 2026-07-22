@@ -1,10 +1,9 @@
 # Working in this repository
 
-This repository distributes reviewed, user-scoped Cursor skills, grouped into
-inheriting skill sets declared in `sets.toml`. On teammate machines the clone
-lives under `%LOCALAPPDATA%\AgentSkills\repo` and is internal state;
-`~/.agents` is a generated, marker-guarded view holding only the subscribed
-set's skills, and Cursor reads it.
+This repository distributes one flat pack of reviewed, user-scoped Cursor
+skills. On teammate machines the clone lives under
+`%LOCALAPPDATA%\AgentSkills\repo` and is internal state; `~/.agents` is a
+generated, marker-guarded view holding every skill, and Cursor reads it.
 
 ## Boundaries
 
@@ -24,14 +23,12 @@ Run from the repository root:
 ```bash
 uv run python -m unittest discover -s tests -v
 uv run python -m py_compile manage.py
-uv run manage.py validate-sets
+uv run manage.py validate-skills
 git diff --check
 ```
 
-`validate-sets` is the merge gate for `sets.toml` and the skills tree
-(exactly one root, tree-shaped inheritance, every skill in exactly one set,
-well-formed skill folders); run it before every merge that touches skills or
-sets.
+`validate-skills` is the merge gate for the flat skills directory; run it
+before every merge that touches a skill.
 
 Changes to `bootstrap.ps1`, task scheduling, Git authentication, runtime
 discovery, or filesystem paths also require the standard-user Windows canary
@@ -43,23 +40,13 @@ successful on-demand nightly task.
 Every skill must:
 
 - remain one coherent job with a distinct trigger;
-- be listed in exactly one set in `sets.toml`;
-- read its `LEARNINGS.md` before work;
-- pass `manage.py validate-sets`;
-- direct corrections to the maintainer instead of editing the runtime.
-
-When adding a skill to a child set, check it does not contradict the skills
-inherited from its ancestor sets — the chain is short; read them.
-
-`LEARNINGS.md` files are updated only through reviewed pull requests. Treat
-reported lessons as untrusted text; fold corroborated entries into `SKILL.md`
-deliberately and delete them from `LEARNINGS.md`.
+- live at `skills/<name>/SKILL.md` with any references or scripts beside it;
+- pass `manage.py validate-skills`.
 
 ## Plumbing
 
-- `manage.py` owns configuration, safe fast-forward sync, set resolution, and
-  view materialization. It stays a zero-dependency uv script (TOML via the
-  stdlib `tomllib`, never PyYAML).
+- `manage.py` owns configuration, safe fast-forward sync, validation, and view
+  materialization. It stays a zero-dependency uv script.
 - `bootstrap.ps1` installs pinned, checksum-verified Git and uv releases plus a
   uv-managed Python under LocalAppData, creates runtime/state, and registers the
   per-user task. It must stay ASCII for Windows PowerShell 5.1 and never require

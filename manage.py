@@ -3,13 +3,11 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Safely install and update the team skill runtime.
+"""Safely install and update the team skill pack.
 
 The skills repository is cloned under local state and treated as a runtime
 appliance: member machines only fetch and fast-forward it, never push, reset,
-or rewrite it. Each machine subscribes to one skill set from sets.toml; sync
-resolves the set's inheritance chain and rebuilds a generated view directory
-(~/.agents) holding exactly the subscribed skills, which Cursor reads.
+or rewrite it. Sync rebuilds ~/.agents from every skill under skills/.
 """
 
 from __future__ import annotations
@@ -21,14 +19,13 @@ import os
 import re
 import shutil
 import subprocess
-import tomllib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Sequence
 
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 STATE_DIR_ENV = "AGENT_SKILLS_STATE_DIR"
 NET_TIMEOUT = 300
 VERSION_RE = re.compile(r"^[0-9a-f]{7,64}$")
@@ -216,7 +213,6 @@ class ManagerConfig:
     runtime_repo_url: str
     branch: str
     view_path: str
-    skill_set: str
     schema_version: int = CONFIG_VERSION
 
     @classmethod
@@ -226,14 +222,12 @@ class ManagerConfig:
         runtime_repo_url: str,
         view_path: Path,
         branch: str = "main",
-        skill_set: str = "global",
     ) -> ManagerConfig:
         return cls(
             runtime_path=str(Path(runtime_path).expanduser().resolve()),
             runtime_repo_url=runtime_repo_url.rstrip("/"),
             branch=branch,
             view_path=str(Path(view_path).expanduser().resolve()),
-            skill_set=skill_set,
         )
 
     @classmethod
@@ -263,8 +257,6 @@ class ManagerConfig:
             raise ManagerError("runtime_repo_url is required")
         if not re.fullmatch(r"[A-Za-z0-9._/-]+", self.branch) or ".." in self.branch:
             raise ManagerError(f"unsafe runtime branch: {self.branch!r}")
-        if not NAME_RE.fullmatch(self.skill_set):
-            raise ManagerError(f"unsafe skill set name: {self.skill_set!r}")
         runtime = Path(self.runtime_path)
         view = Path(self.view_path)
         if runtime == view or runtime in view.parents or view in runtime.parents:
@@ -416,80 +408,25 @@ def sync_runtime(config: ManagerConfig) -> None:
         log(f"runtime: already current at {runtime_head(runtime)[:12]}")
 
 
-# Skill sets and inheritance
+# Flat skill pack
 
 
-def load_sets(repo_root: Path) -> dict[str, dict[str, Any]]:
-    """Parse and structurally validate sets.toml from a skills checkout."""
+def list_skills(repo_root: Path) -> list[str]:
+    """Return every skill directory in stable order."""
 
-    path = repo_root / "sets.toml"
-    if not path.is_file():
-        raise ManagerError(f"missing sets manifest: {path}")
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise ManagerError(f"invalid sets.toml: {exc}") from exc
-    if not data:
-        raise ManagerError("sets.toml defines no sets")
-    roots = []
-    for name, table in data.items():
-        if not NAME_RE.fullmatch(name):
-            raise ManagerError(f"unsafe set name: {name!r}")
-        if not isinstance(table, dict):
-            raise ManagerError(f"set {name!r} must be a TOML table")
-        unknown = set(table) - {"inherits", "skills"}
-        if unknown:
-            raise ManagerError(
-                f"set {name!r} has unknown keys: {', '.join(sorted(unknown))}"
-            )
-        skills = table.get("skills")
-        if not isinstance(skills, list) or not all(
-            isinstance(skill, str) and NAME_RE.fullmatch(skill) for skill in skills
-        ):
-            raise ManagerError(
-                f"set {name!r} needs a skills list of kebab-case names"
-            )
-        if len(set(skills)) != len(skills):
-            raise ManagerError(f"set {name!r} lists a skill twice")
-        parent = table.get("inherits")
-        if parent is None:
-            roots.append(name)
-        elif not isinstance(parent, str) or parent not in data:
-            raise ManagerError(f"set {name!r} inherits unknown set {parent!r}")
-    if len(roots) != 1:
-        raise ManagerError(
-            f"sets.toml must define exactly one root set without 'inherits' "
-            f"(found {len(roots)})"
-        )
-    return data
-
-
-def resolve_set(
-    sets: dict[str, dict[str, Any]], name: str
-) -> tuple[list[str], list[str]]:
-    """Return (inheritance chain root-first, ordered union of skills)."""
-
-    if name not in sets:
-        raise ManagerError(
-            f"unknown skill set {name!r}; available: {', '.join(sorted(sets))}"
-        )
-    chain: list[str] = []
-    current: str | None = name
-    while current is not None:
-        if current in chain:
-            raise ManagerError(f"set inheritance cycle at {current!r}")
-        chain.append(current)
-        current = sets[current].get("inherits")
-    chain.reverse()
+    skills_dir = repo_root / "skills"
+    if not skills_dir.is_dir():
+        raise ManagerError(f"missing skills directory: {skills_dir}")
     skills: list[str] = []
-    for set_name in chain:
-        for skill in sets[set_name]["skills"]:
-            if skill in skills:
-                raise ManagerError(
-                    f"skill {skill!r} appears twice on the {name!r} chain"
-                )
-            skills.append(skill)
-    return chain, skills
+    for entry in sorted(skills_dir.iterdir(), key=lambda path: path.name):
+        if not entry.is_dir():
+            raise ManagerError(f"unexpected file in skills directory: {entry.name}")
+        if not NAME_RE.fullmatch(entry.name):
+            raise ManagerError(f"unsafe skill directory name: {entry.name!r}")
+        skills.append(entry.name)
+    if not skills:
+        raise ManagerError("skills directory is empty")
+    return skills
 
 
 def _skill_problems(skill_dir: Path) -> list[str]:
@@ -497,7 +434,10 @@ def _skill_problems(skill_dir: Path) -> list[str]:
 
     name = skill_dir.name
     problems: list[str] = []
-    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_file.is_file():
+        return [f"skill {name!r}: missing SKILL.md"]
+    text = skill_file.read_text(encoding="utf-8")
     if not text.startswith("---\n") or "\n---" not in text[4:]:
         return [f"skill {name!r}: SKILL.md lacks closed '---' frontmatter"]
     frontmatter = text[4 : text.index("\n---", 4)]
@@ -510,45 +450,21 @@ def _skill_problems(skill_dir: Path) -> list[str]:
         )
     if not re.search(r"^description:\s*\S", frontmatter, re.MULTILINE):
         problems.append(f"skill {name!r}: frontmatter needs a description")
-    if not (skill_dir / "LEARNINGS.md").is_file():
-        problems.append(f"skill {name!r}: missing LEARNINGS.md")
     return problems
 
 
-def validate_sets(repo_root: Path) -> list[str]:
-    """Return every structural problem with sets.toml and the skills tree."""
+def validate_skills(repo_root: Path) -> list[str]:
+    """Return every structural problem with the flat skills pack."""
 
     try:
-        sets = load_sets(repo_root)
+        skills = list_skills(repo_root)
     except ManagerError as exc:
         return [str(exc)]
-    errors: list[str] = []
-    owners: dict[str, list[str]] = {}
-    for name, table in sets.items():
-        for skill in table["skills"]:
-            owners.setdefault(skill, []).append(name)
-    for skill, names in sorted(owners.items()):
-        if len(names) > 1:
-            errors.append(
-                f"skill {skill!r} is listed in multiple sets: {', '.join(names)}"
-            )
-        if not (repo_root / "skills" / skill / "SKILL.md").is_file():
-            errors.append(f"set {names[0]!r} lists missing skill: {skill}")
-        else:
-            errors.extend(_skill_problems(repo_root / "skills" / skill))
-    skills_dir = repo_root / "skills"
-    if skills_dir.is_dir():
-        for entry in sorted(skills_dir.iterdir()):
-            if entry.is_dir() and entry.name not in owners:
-                errors.append(
-                    f"skill directory {entry.name!r} is not listed in any set"
-                )
-    for name in sets:
-        try:
-            resolve_set(sets, name)
-        except ManagerError as exc:
-            errors.append(str(exc))
-    return errors
+    return [
+        problem
+        for skill in skills
+        for problem in _skill_problems(repo_root / "skills" / skill)
+    ]
 
 
 # Materialized skills view
@@ -557,7 +473,7 @@ VIEW_MARKER = ".agent-skills-managed"
 
 
 def materialize_view(config: ManagerConfig) -> None:
-    """Rebuild the Cursor-facing skills view from the subscribed set.
+    """Rebuild the Cursor-facing view from the flat skill pack.
 
     The view is generated and disposable: it is rebuilt in a temp directory
     and swapped in whole, and an existing directory is only ever replaced if
@@ -566,10 +482,10 @@ def materialize_view(config: ManagerConfig) -> None:
 
     runtime = Path(config.runtime_path)
     view = Path(config.view_path)
-    chain, skills = resolve_set(load_sets(runtime), config.skill_set)
-    for skill in skills:
-        if not (runtime / "skills" / skill / "SKILL.md").is_file():
-            raise ManagerError(f"resolved skill is missing from the runtime: {skill}")
+    errors = validate_skills(runtime)
+    if errors:
+        raise ManagerError("invalid skills pack: " + "; ".join(errors))
+    skills = list_skills(runtime)
     if view.exists() and not (view / VIEW_MARKER).is_file():
         raise RuntimeSafetyError(
             f"{view} exists but is not a managed skills view; refusing to replace it"
@@ -586,8 +502,6 @@ def materialize_view(config: ManagerConfig) -> None:
         _atomic_write_json(
             temp / "installed.json",
             {
-                "set": config.skill_set,
-                "chain": chain,
                 "skills": skills,
                 "source_sha": runtime_head(runtime),
                 "generated_at": format_utc(utc_now()),
@@ -598,7 +512,7 @@ def materialize_view(config: ManagerConfig) -> None:
         os.replace(temp, view)
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    log(f"view: set '{config.skill_set}' -> {len(skills)} skill(s) at {view}")
+    log(f"view: installed {len(skills)} skill(s) at {view}")
 
 
 # Command handlers
@@ -616,7 +530,6 @@ def configure_command(args: argparse.Namespace) -> None:
         args.repo_url,
         Path(args.view_path),
         args.branch,
-        args.skill_set,
     )
     runtime = Path(config.runtime_path)
     if not (runtime / ".git").exists():
@@ -655,14 +568,12 @@ def doctor_command(args: argparse.Namespace) -> None:
             "manager runs from configured runtime",
             str(REPO_ROOT),
         )
-        try:
-            _, skills = resolve_set(load_sets(runtime), config.skill_set)
-        except ManagerError as exc:
-            report(False, f"skill set '{config.skill_set}' resolves", str(exc))
+        errors = validate_skills(runtime)
+        if errors:
+            report(False, "skills pack", "; ".join(errors))
         else:
-            report(
-                True, f"skill set '{config.skill_set}' resolves", ", ".join(skills)
-            )
+            skills = list_skills(runtime)
+            report(True, "skills pack", ", ".join(skills))
             view = Path(config.view_path)
             installed_path = view / "installed.json"
             if not (view / VIEW_MARKER).is_file() or not installed_path.is_file():
@@ -674,11 +585,9 @@ def doctor_command(args: argparse.Namespace) -> None:
                     )
                 except json.JSONDecodeError:
                     installed = {}
-                current = (
-                    installed.get("set") == config.skill_set
-                    and installed.get("skills") == skills
-                    and installed.get("source_sha") == runtime_head(runtime)
-                )
+                current = installed.get("skills") == skills and installed.get(
+                    "source_sha"
+                ) == runtime_head(runtime)
                 report(
                     current,
                     "skills view is current",
@@ -705,18 +614,15 @@ def sync_command(args: argparse.Namespace) -> None:
         raise
 
 
-def validate_sets_command(args: argparse.Namespace) -> None:
+def validate_skills_command(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).expanduser().resolve()
-    errors = validate_sets(repo_root)
+    errors = validate_skills(repo_root)
     if errors:
         for error in errors:
-            log(f"sets: {error}")
-        raise ManagerError(f"sets validation failed with {len(errors)} error(s)")
-    sets = load_sets(repo_root)
-    for name in sorted(sets):
-        _, skills = resolve_set(sets, name)
-        log(f"sets: {name} -> {', '.join(skills) or '(no skills)'}")
-    log(f"sets: {len(sets)} set(s) valid")
+            log(f"skills: {error}")
+        raise ManagerError(f"skill validation failed with {len(errors)} error(s)")
+    skills = list_skills(repo_root)
+    log(f"skills: {len(skills)} valid ({', '.join(skills)})")
 
 
 def _add_state_arg(parser: argparse.ArgumentParser) -> None:
@@ -739,7 +645,6 @@ def build_parser() -> argparse.ArgumentParser:
     configure.add_argument("--runtime-path", required=True)
     configure.add_argument("--repo-url", required=True)
     configure.add_argument("--view-path", required=True)
-    configure.add_argument("--skill-set", default="global")
     configure.add_argument("--branch", default="main")
     _add_state_arg(configure)
     configure.set_defaults(handler=configure_command)
@@ -757,10 +662,10 @@ def build_parser() -> argparse.ArgumentParser:
     sync.set_defaults(handler=sync_command)
 
     validate = subparsers.add_parser(
-        "validate-sets", help="check sets.toml and the skills tree for conflicts"
+        "validate-skills", help="check every folder in the flat skills pack"
     )
     validate.add_argument("--repo-root", default=str(REPO_ROOT))
-    validate.set_defaults(handler=validate_sets_command)
+    validate.set_defaults(handler=validate_skills_command)
 
     return parser
 

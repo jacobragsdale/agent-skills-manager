@@ -11,8 +11,6 @@ Produce a repo-scoped AGENTS.md with verified commands, non-inferable rules,
 and hard boundaries. The evidence is in `references/research-notes.md`; read it
 when the user questions a rule.
 
-Before any other work, read `LEARNINGS.md` next to this file.
-
 ## Non-negotiables
 
 - **Never template-dump or generate from a skim.** Auto-generated context
@@ -128,12 +126,3 @@ file — comments are stripped before models see it):
 - `references/template.md` — READ in step 4; skeleton with required sections.
 - `references/research-notes.md` — READ when a house rule is questioned;
   every claim above, with sources.
-
-## Report a factual correction
-
-If the user corrected this skill's instructions or trigger behavior, restate
-the lesson as one factual line ("<what failed and what to do instead>") and
-tell the user to pass it to the skill maintainer, who adds it to this skill's
-`LEARNINGS.md` through a normal pull request. Never include secrets, prompts,
-code, paths, usernames, or hostnames in the lesson. Do not edit the runtime
-checkout yourself.

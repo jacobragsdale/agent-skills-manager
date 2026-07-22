@@ -1,164 +1,105 @@
 # Skillsync
 
-Skillsync gives an engineering team a shared, reviewable library of
-Cursor skills that stays current on every developer workstation. Skills are
-organized into **inheriting skill sets** — universal practices at the root,
-language and team specifics in child sets — and every machine subscribes to
-exactly one set, receiving its skills plus everything inherited up the chain.
+Skillsync puts one shared pack of Cursor skills on each developer workstation.
+Every directory under `skills/` is installed. There are no per-team choices or
+manifests.
 
-It is intentionally narrow: distribute trusted skills and update them safely.
-It is not an agent platform, usage dashboard, or employee-monitoring system.
+A developer runs one bootstrap command. A per-user nightly job pulls updates
+and rebuilds Cursor's `~/.agents` view.
 
-## What your team gets
-
-| Audience | Benefit |
-|---|---|
-| Developers | The skills for *their* team appear in Cursor, update automatically, and require no administrator-assisted install. |
-| Engineering managers | Team practices are versioned, protected by branch policy, and changed through review instead of copied between laptops. |
-| Skill maintainers | One manifest describes who gets what; `manage.py validate-sets` proves it is conflict-free before it merges. |
-
-## Skill sets and inheritance
-
-`sets.toml` at the repository root is the whole data model:
-
-```toml
-[global]
-skills = ["agents-md"]
-
-[python]
-inherits = "global"
-skills = ["python-standards"]
-```
-
-Sets form a tree. A machine subscribed to a set receives the union of skills
-along its inheritance chain:
+## Repository shape
 
 ```text
-global ──────────── agents-md
-   └── python ────── python-standards
-          ├── payments ──── stripe-conventions      (example)
-          └── data-eng ──── dbt-conventions         (example)
+skills/
+  agents-md/
+    SKILL.md
+    references/
+    scripts/
+  python-standards/
+    SKILL.md
+    references/
+    scripts/
+bootstrap.ps1
+manage.py
+tests/
 ```
 
-A machine on `payments` would get `agents-md` + `python-standards` +
-`stripe-conventions`; a machine on `global` gets only `agents-md`. This
-repository currently ships the `global` and `python` sets shown above.
+To add a skill, add `skills/<name>/SKILL.md` and any files it needs. Once the
+change reaches `main`, every installed machine receives it on the next nightly
+sync.
 
-The rules, all enforced by `manage.py validate-sets`:
+## Install
 
-- exactly one root set has no `inherits`; every other set names one parent;
-- inheritance is a tree — one parent, no cycles;
-- every directory under `skills/` is listed in **exactly one** set.
+Requirements are Windows 11 x64, Cursor, read access to the skills repository,
+and an internal HTTPS location serving `bootstrap.ps1`. Administrator rights,
+Git, uv, and Python are not prerequisites. When missing, the bootstrap installs
+pinned, checksum-verified copies under `%LOCALAPPDATA%\AgentSkills`.
 
-Conflicts are handled structurally where possible: the flat `skills/`
-directory makes duplicate skill names impossible, and the manifest rules make
-a skill's owner unambiguous. Semantic conflicts — a child skill contradicting
-inherited guidance — are the pull-request reviewer's job, made tractable
-because a new skill only needs comparing against its own short inheritance
-chain.
-
-### Adding a skill or a team
-
-1. Add `skills/<name>/` with a `SKILL.md` and `LEARNINGS.md`.
-2. List it in the right set in `sets.toml` — or add a new
-   `[your-team]` table with `inherits` and open the same pull request.
-3. Run `manage.py validate-sets` before merging; once merged, subscribed
-   machines pick the change up on their next nightly sync. New teams install
-   with `bootstrap.ps1 -SkillSet your-team`.
-
-## How it works on a machine
-
-```text
-%LOCALAPPDATA%\AgentSkills\           internal state
-  repo\                               full clone, fast-forward only, never edited
-  config.json                         repo URL, branch, skill set, view path
-  locks\  logs\
-
-%USERPROFILE%\.agents\                generated view - Cursor reads this
-  skills\<subscribed skills only>
-  installed.json                      set, chain, skills, source Git SHA
-  .agent-skills-managed               marker: safe for the manager to replace
-```
-
-Nightly, the manager: validates the clone (right path, origin, branch, no
-local changes) → fetches → fast-forward merges → resolves the subscribed set
-from `sets.toml` → rebuilds the view in a temp directory and swaps it in
-whole. The view is disposable and self-healing; the clone is never touched by
-anything except a fast-forward. If a bad manifest ever reaches `main`, sync
-fails loudly and the machine keeps yesterday's working view.
-
-The manager never resets, rebases, switches branches, or deletes a directory
-it cannot prove it generated (the marker file).
-
-## Data boundary
-
-The client records and transmits nothing. There are no invocation, outcome,
-adoption, duration, productivity, prompt, response, code, or repository-detail
-events. The only network traffic is the Git fetch of the skills repository,
-which the Git provider can associate with its normal authentication and audit
-records.
-
-## Requirements
-
-- Windows 11 x64 and Cursor;
-- read access to the protected skills repository;
-- an internal HTTPS location from which to serve the reviewed bootstrap script.
-
-Git, uv, Python, and administrator rights are not prerequisites. When needed,
-the installer downloads pinned, SHA-256-verified Git and uv releases plus a
-managed Python runtime under `%LOCALAPPDATA%\AgentSkills`.
-
-## Deploy for a team
-
-1. Protect `main` in this repository. Developers should have read access but no
-   direct contribution or policy-bypass permission.
-2. Set the repository default near the top of `bootstrap.ps1`:
+Before publishing the bootstrap, configure its repository URL:
 
 ```powershell
 $DefaultRepoUrl = 'https://dev.azure.com/<org>/<project>/_git/agent-skills'
 ```
 
-3. Host the reviewed `bootstrap.ps1` at an internal HTTPS URL.
-4. Pilot with a small group and verify repository permissions before expanding
-   access.
-
-Azure DevOps is shown here, but the workflow only requires Git hosting and an
-authentication setup that works with Git for Windows.
-
-## Install
-
-With the repository default configured, a developer runs:
+Then a developer runs:
 
 ```powershell
 irm https://<internal-host>/bootstrap.ps1 | iex
 ```
 
-That subscribes the machine to the `global` set. To subscribe to a specific
-team set, or for local testing:
+For local testing, pass the repository explicitly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File bootstrap.ps1 `
-  -RepoUrl '<skills-repo-url>' -SkillSet python
+  -RepoUrl '<skills-repo-url>'
 ```
 
-The installer is safe to rerun (also to change the subscribed set). It
-replaces the nightly task definition, safely syncs, rebuilds the view, and
-runs `doctor`.
+The bootstrap is safe to rerun. It installs missing tools, creates or reuses
+the read-only runtime clone, writes local configuration, replaces the nightly
+task definition, syncs the skills, and runs `doctor`.
 
-## Day-to-day operation
+## What runs on a machine
 
-No routine developer action is required. `AgentSkillsNightly` updates the
-clone and rebuilds the view. Failures are written to
-`%LOCALAPPDATA%\AgentSkills\logs\task.log`, and the process exits nonzero.
+```text
+%LOCALAPPDATA%\AgentSkills\
+  repo\                 read-only runtime clone
+  config.json           repository, branch, and view paths
+  locks\
+  logs\task.log
 
-If Git authentication expires, run one fetch to reopen the normal Git
-Credential Manager sign-in flow:
+%USERPROFILE%\.agents\
+  skills\               the complete pack
+  installed.json        skill names and source Git SHA
+  .agent-skills-managed replacement safety marker
+```
+
+`AgentSkillsNightly` runs `manage.py sync` once a day. Sync verifies that the
+clone has the expected origin and branch and has no local changes, fetches the
+remote, fast-forwards `main`, validates every skill, and replaces the generated
+view.
+
+The manager never pushes, resets, rebases, switches branches, or discards clone
+files. It only replaces a view carrying its marker. If an invalid skill reaches
+`main`, the previous working view remains in place.
+
+The client records and transmits nothing. Its only network traffic is the Git
+fetch, subject to the Git provider's normal authentication and audit records.
+
+## Maintenance
+
+No routine developer action is required. Failures are written to:
+
+```text
+%LOCALAPPDATA%\AgentSkills\logs\task.log
+```
+
+If Git authentication expires, run one interactive fetch:
 
 ```powershell
 git -C "$env:LOCALAPPDATA\AgentSkills\repo" fetch
 ```
 
-Useful maintenance commands use the installed interpreter:
+Useful checks use the installed Python:
 
 ```powershell
 $manager = "$env:LOCALAPPDATA\AgentSkills\repo\manage.py"
@@ -168,30 +109,18 @@ $state = "$env:LOCALAPPDATA\AgentSkills"
 & $env:AGENT_SKILLS_PYTHON $manager sync --state-dir $state
 ```
 
-`doctor` verifies the tools, the clone's safety invariants, that the
-subscribed set still resolves, and that the view matches the clone's current
-commit. `installed.json` in the view answers "what is on this machine and
-where did it come from" at a glance.
-
-## Maintain learnings
-
-Each skill keeps a `LEARNINGS.md` next to its `SKILL.md`. Skills read it
-before working, and developers report corrections to a maintainer instead of
-editing their runtime. Maintainers land reported lessons through normal pull
-requests, treat the text as untrusted input, and fold corroborated entries
-into `SKILL.md` deliberately — deleting them from `LEARNINGS.md` once folded.
+`doctor` verifies the tools, clone safety, flat skill pack, nightly task, and
+generated view.
 
 ## Remove an installation
 
-`%USERPROFILE%\.agents` is generated; confirm it carries the manager's marker
-before deleting:
+Confirm that `.agents` is managed by this project before deleting it:
 
 ```powershell
 Test-Path "$HOME\.agents\.agent-skills-managed"
 ```
 
-If that prints `True`, remove the task, project-owned PATH entries, view, and
-state:
+If that prints `True`:
 
 ```powershell
 schtasks.exe /End /TN AgentSkillsNightly 2>$null
@@ -209,11 +138,9 @@ $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';' |
 Remove-Item -LiteralPath "$env:LOCALAPPDATA\AgentSkills" -Recurse -Force
 ```
 
-If `.agents` lacks the marker, it is not this project's directory — inspect it
-instead of deleting it. Removing LocalAppData also removes the internal clone
-and any Git, uv, or Python copy installed by this project. Pre-existing tools
-and shared Git credentials remain untouched. Open a new terminal afterward so
-it receives the cleaned user environment.
+If the marker is absent, inspect `.agents` instead of deleting it. Removing
+`AgentSkills` also removes tool copies installed by the bootstrap; pre-existing
+tools and shared Git credentials are untouched.
 
 ## Development
 
@@ -222,24 +149,15 @@ Run from the repository root:
 ```bash
 uv run python -m unittest discover -s tests -v
 uv run python -m py_compile manage.py
-uv run manage.py validate-sets
+uv run manage.py validate-skills
 git diff --check
 ```
 
-`validate-sets` checks the manifest rules and that every skill folder is
-well-formed (frontmatter, name matching its folder, a description, and a
-`LEARNINGS.md`).
+`validate-skills` checks that `skills/` is non-empty, contains only kebab-case
+skill directories, and that every `SKILL.md` has matching frontmatter and a
+description.
 
-Installer, task, authentication, or filesystem-path changes also
-require a fresh Windows 11 x64 standard-user canary: Git and uv absent, no UAC
-prompt, `doctor` passing, and an on-demand nightly task returning zero.
-
-## Repository layout
-
-```text
-sets.toml     skill sets and their inheritance tree
-skills/       reviewed skills, references, and their required helper scripts
-manage.py     safe runtime updater, set resolver, and view materializer
-bootstrap.ps1 per-user Windows installer and task registration
-tests/        real-Git integration tests for manager behavior
-```
+Changes to `bootstrap.ps1`, task scheduling, Git authentication, runtime
+discovery, or filesystem paths also require a Windows 11 x64 standard-user
+canary with Git and uv absent: no UAC prompt, `doctor` passing, and an on-demand
+nightly task returning zero.

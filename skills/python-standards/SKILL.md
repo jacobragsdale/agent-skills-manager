@@ -11,8 +11,6 @@ Bring any Python repo — usually brownfield internal code — to the house
 standard: uv-managed, one `pyproject.toml`, ruff + basedpyright enforced by
 pre-commit, zero custom setup steps.
 
-Before any other work, read `LEARNINGS.md` next to this file.
-
 ## Target state (definition of done)
 
 - [ ] `.python-version` pins `3.11`; `requires-python = ">=3.11"`
@@ -60,10 +58,8 @@ it — read it line by line.
 Run until clean, fixing ONE error at a time: `uv sync` → on failure READ
 `references/troubleshooting.md` and match the error signature → apply the
 fix in `pyproject.toml` (or `.env.example` for env-var fixes) → repeat.
-If you solve an error NOT in the playbook, report the fix to the user so a
-maintainer can add it to the playbook through a pull request — that is how
-this skill learns without mutating the runtime. Verify from zero: remove `.venv` with the
-platform-appropriate filesystem command, then run `uv sync` and
+Verify from zero: remove `.venv` with the platform-appropriate filesystem
+command, then run `uv sync` and
 `uv run python -c "import <top_level_package>"`.
 
 ### 4. Pre-commit: ruff + basedpyright
@@ -122,15 +118,6 @@ env-fiddling get deleted. List them in a README "Running" table.
 
 - `scripts/audit_repo.py` — RUN first on any brownfield repo.
 - `scripts/triage.py` — RUN for every type check; never bare basedpyright.
-- `references/troubleshooting.md` — READ at the first `uv sync` failure; report newly solved errors so a maintainer can extend it.
+- `references/troubleshooting.md` — READ at the first `uv sync` failure.
 - `references/precommit-and-lint.md` — READ in step 4; copy templates.
 - `references/rules.md` — READ for uncovered diagnostic rules and baseline mechanics.
-
-## Report a factual correction
-
-For a user correction or a new `uv sync` fix, restate the lesson as one
-factual line ("<what failed and what to do instead>") and tell the user to
-pass it to the skill maintainer, who decides whether it belongs in
-`LEARNINGS.md` or the playbook and lands it through a normal pull request.
-Never include secrets, prompts, code, paths, usernames, or hostnames in the
-lesson. Do not edit the runtime checkout yourself.
