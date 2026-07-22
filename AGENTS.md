@@ -29,8 +29,9 @@ uv run manage.py validate-sets
 git diff --check
 ```
 
-CI runs the same commands; `validate-sets` is the merge gate for `sets.toml`
-(exactly one root, tree-shaped inheritance, every skill in exactly one set).
+`validate-sets` is the merge gate for `sets.toml` (exactly one root,
+tree-shaped inheritance, every skill in exactly one set); run it before every
+merge that touches skills or sets.
 
 Changes to `bootstrap.ps1`, task scheduling, Git authentication, runtime
 discovery, or filesystem paths also require the standard-user Windows canary

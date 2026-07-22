@@ -15,7 +15,7 @@ It is not an agent platform, usage dashboard, or employee-monitoring system.
 |---|---|
 | Developers | The skills for *their* team appear in Cursor, update automatically, and require no administrator-assisted install. |
 | Engineering managers | Team practices are versioned, protected by branch policy, and changed through review instead of copied between laptops. |
-| Skill maintainers | One manifest describes who gets what; CI proves it is conflict-free before it can merge. |
+| Skill maintainers | One manifest describes who gets what; `manage.py validate-sets` proves it is conflict-free before it merges. |
 
 ## Skill sets and inheritance
 
@@ -44,7 +44,7 @@ A machine on `payments` would get `agents-md` + `python-standards` +
 `stripe-conventions`; a machine on `global` gets only `agents-md`. This
 repository currently ships the `global` and `python` sets shown above.
 
-The rules, all enforced by `manage.py validate-sets` in CI:
+The rules, all enforced by `manage.py validate-sets`:
 
 - exactly one root set has no `inherits`; every other set names one parent;
 - inheritance is a tree — one parent, no cycles;
@@ -63,9 +63,9 @@ chain.
    (`tools/validate_skill.py` checks the shape).
 2. List it in the right set in `sets.toml` — or add a new
    `[your-team]` table with `inherits` and open the same pull request.
-3. CI runs `validate-sets`; once merged, subscribed machines pick the change
-   up on their next nightly sync. New teams install with
-   `bootstrap.ps1 -SkillSet your-team`.
+3. Run `manage.py validate-sets` before merging; once merged, subscribed
+   machines pick the change up on their next nightly sync. New teams install
+   with `bootstrap.ps1 -SkillSet your-team`.
 
 ## How it works on a machine
 
@@ -226,8 +226,7 @@ uv run manage.py validate-sets
 git diff --check
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same commands on every push and pull
-request. Installer, task, authentication, or filesystem-path changes also
+Installer, task, authentication, or filesystem-path changes also
 require a fresh Windows 11 x64 standard-user canary: Git and uv absent, no UAC
 prompt, `doctor` passing, and an on-demand nightly task returning zero.
 
