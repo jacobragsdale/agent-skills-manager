@@ -58,6 +58,10 @@ The bootstrap is safe to rerun. It installs missing tools, creates or reuses
 the read-only runtime clone, writes local configuration, replaces the nightly
 task definition, syncs the skills, and runs `doctor`.
 
+After deploying this version, rerun the bootstrap once on machines installed
+with an earlier version so their simplified local configuration is rewritten.
+Nightly updates require no action after that.
+
 ## What runs on a machine
 
 ```text
