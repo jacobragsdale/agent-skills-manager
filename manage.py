@@ -674,22 +674,13 @@ def sync_command(args: argparse.Namespace) -> None:
     paths = _state_paths(args.state_dir)
     paths.ensure()
     config = ManagerConfig.load(paths)
-    with ProcessLock(paths.locks / "nightly.lock"):
-        sync_runtime(config)
-        materialize_view(config)
-
-
-def nightly_command(args: argparse.Namespace) -> None:
-    paths = _state_paths(args.state_dir)
-    paths.ensure()
-    config = ManagerConfig.load(paths)
     try:
-        with ProcessLock(paths.locks / "nightly.lock"):
+        with ProcessLock(paths.locks / "sync.lock"):
             sync_runtime(config)
             materialize_view(config)
-    except ManagerError as exc:
-        notify_user("Agent Skills nightly job needs attention; see the task log.")
-        raise ManagerError(f"sync: {exc}") from exc
+    except ManagerError:
+        notify_user("Agent Skills sync needs attention; see the task log.")
+        raise
 
 
 def validate_sets_command(args: argparse.Namespace) -> None:
@@ -742,12 +733,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_state_arg(sync)
     sync.set_defaults(handler=sync_command)
-
-    nightly = subparsers.add_parser(
-        "nightly", help="safely update the runtime and notify on failure"
-    )
-    _add_state_arg(nightly)
-    nightly.set_defaults(handler=nightly_command)
 
     validate = subparsers.add_parser(
         "validate-sets", help="check sets.toml and the skills tree for conflicts"

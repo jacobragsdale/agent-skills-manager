@@ -405,7 +405,7 @@ class MaterializeTests(unittest.TestCase):
 
 
 class OperationalTests(unittest.TestCase):
-    def test_nightly_fails_on_dirty_runtime_without_discarding_files(self) -> None:
+    def test_sync_fails_on_dirty_runtime_without_discarding_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -417,7 +417,7 @@ class OperationalTests(unittest.TestCase):
             args = type("Args", (), {"state_dir": str(paths.root)})()
 
             with self.assertRaises(manage.ManagerError):
-                manage.nightly_command(args)
+                manage.sync_command(args)
 
             self.assertEqual((runtime / "dirty.txt").read_text(), "keep\n")
 

@@ -311,7 +311,7 @@ $runtimeEscaped = $RuntimeDir -replace "'", "''"
 $stateEscaped = $StateDir -replace "'", "''"
 $pythonEscaped = $pythonPath -replace "'", "''"
 $logEscaped = $logPath -replace "'", "''"
-$command = "Set-Location '$runtimeEscaped'; & '$pythonEscaped' manage.py nightly --state-dir '$stateEscaped' *>> '$logEscaped'"
+$command = "Set-Location '$runtimeEscaped'; & '$pythonEscaped' manage.py sync --state-dir '$stateEscaped' *>> '$logEscaped'"
 Register-NightlyTask $command
 Write-Note "Task '$TaskName' registered."
 
