@@ -24,14 +24,14 @@ Run from the repository root:
 ```bash
 uv run python -m unittest discover -s tests -v
 uv run python -m py_compile manage.py
-uv run tools/validate_skill.py skills/*
 uv run manage.py validate-sets
 git diff --check
 ```
 
-`validate-sets` is the merge gate for `sets.toml` (exactly one root,
-tree-shaped inheritance, every skill in exactly one set); run it before every
-merge that touches skills or sets.
+`validate-sets` is the merge gate for `sets.toml` and the skills tree
+(exactly one root, tree-shaped inheritance, every skill in exactly one set,
+well-formed skill folders); run it before every merge that touches skills or
+sets.
 
 Changes to `bootstrap.ps1`, task scheduling, Git authentication, runtime
 discovery, or filesystem paths also require the standard-user Windows canary
@@ -45,7 +45,7 @@ Every skill must:
 - remain one coherent job with a distinct trigger;
 - be listed in exactly one set in `sets.toml`;
 - read its `LEARNINGS.md` before work;
-- pass `tools/validate_skill.py`;
+- pass `manage.py validate-sets`;
 - direct corrections to the maintainer instead of editing the runtime.
 
 When adding a skill to a child set, check it does not contradict the skills

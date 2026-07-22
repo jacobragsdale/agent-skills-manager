@@ -143,6 +143,22 @@ class SetResolutionTests(unittest.TestCase):
             self.assertIn("missing skill: missing-dir", errors)
             self.assertIn("'orphan-skill' is not listed in any set", errors)
 
+    def test_malformed_skill_folders_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_sets(Path(tmp), '[global]\nskills = ["bad-skill"]\n')
+            skill = root / "skills" / "bad-skill"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: wrong-name\n---\n\n# No description\n",
+                encoding="utf-8",
+            )
+
+            errors = "\n".join(manage.validate_sets(root))
+
+            self.assertIn("must match the folder name", errors)
+            self.assertIn("needs a description", errors)
+            self.assertIn("missing LEARNINGS.md", errors)
+
     def test_repo_sets_manifest_is_valid(self) -> None:
         self.assertEqual(manage.validate_sets(manage.REPO_ROOT), [])
 

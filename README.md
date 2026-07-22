@@ -59,8 +59,7 @@ chain.
 
 ### Adding a skill or a team
 
-1. Add `skills/<name>/` with a `SKILL.md` and `LEARNINGS.md`
-   (`tools/validate_skill.py` checks the shape).
+1. Add `skills/<name>/` with a `SKILL.md` and `LEARNINGS.md`.
 2. List it in the right set in `sets.toml` — or add a new
    `[your-team]` table with `inherits` and open the same pull request.
 3. Run `manage.py validate-sets` before merging; once merged, subscribed
@@ -223,10 +222,13 @@ Run from the repository root:
 ```bash
 uv run python -m unittest discover -s tests -v
 uv run python -m py_compile manage.py
-uv run tools/validate_skill.py skills/*
 uv run manage.py validate-sets
 git diff --check
 ```
+
+`validate-sets` checks the manifest rules and that every skill folder is
+well-formed (frontmatter, name matching its folder, a description, and a
+`LEARNINGS.md`).
 
 Installer, task, authentication, or filesystem-path changes also
 require a fresh Windows 11 x64 standard-user canary: Git and uv absent, no UAC

@@ -492,6 +492,29 @@ def resolve_set(
     return chain, skills
 
 
+def _skill_problems(skill_dir: Path) -> list[str]:
+    """Check the shape of one skill folder without any YAML dependency."""
+
+    name = skill_dir.name
+    problems: list[str] = []
+    text = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    if not text.startswith("---\n") or "\n---" not in text[4:]:
+        return [f"skill {name!r}: SKILL.md lacks closed '---' frontmatter"]
+    frontmatter = text[4 : text.index("\n---", 4)]
+    declared = re.search(
+        r"^name:\s*[\"']?([A-Za-z0-9-]+)[\"']?\s*$", frontmatter, re.MULTILINE
+    )
+    if not declared or declared.group(1) != name:
+        problems.append(
+            f"skill {name!r}: frontmatter name must match the folder name"
+        )
+    if not re.search(r"^description:\s*\S", frontmatter, re.MULTILINE):
+        problems.append(f"skill {name!r}: frontmatter needs a description")
+    if not (skill_dir / "LEARNINGS.md").is_file():
+        problems.append(f"skill {name!r}: missing LEARNINGS.md")
+    return problems
+
+
 def validate_sets(repo_root: Path) -> list[str]:
     """Return every structural problem with sets.toml and the skills tree."""
 
@@ -511,6 +534,8 @@ def validate_sets(repo_root: Path) -> list[str]:
             )
         if not (repo_root / "skills" / skill / "SKILL.md").is_file():
             errors.append(f"set {names[0]!r} lists missing skill: {skill}")
+        else:
+            errors.extend(_skill_problems(repo_root / "skills" / skill))
     skills_dir = repo_root / "skills"
     if skills_dir.is_dir():
         for entry in sorted(skills_dir.iterdir()):
