@@ -52,7 +52,7 @@ def write_skill(root: Path, name: str) -> None:
     (skill / "LEARNINGS.md").write_text("# Learnings\n", encoding="utf-8")
 
 
-def write_sets(root: Path, sets_toml: str, skills: list[str] = []) -> Path:
+def write_sets(root: Path, sets_toml: str, skills: tuple[str, ...] = ()) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "sets.toml").write_text(sets_toml, encoding="utf-8")
     for name in skills:
@@ -67,7 +67,7 @@ class SetResolutionTests(unittest.TestCase):
                 Path(tmp),
                 '[global]\nskills = ["base-a", "base-b"]\n'
                 '[team]\ninherits = "global"\nskills = ["team-a"]\n',
-                ["base-a", "base-b", "team-a"],
+                ("base-a", "base-b", "team-a"),
             )
 
             sets = manage.load_sets(root)
@@ -82,7 +82,7 @@ class SetResolutionTests(unittest.TestCase):
             root = write_sets(
                 Path(tmp),
                 '[global]\nskills = ["base-a"]\n',
-                ["base-a"],
+                ("base-a",),
             )
 
             chain, skills = manage.resolve_set(manage.load_sets(root), "global")
@@ -134,7 +134,7 @@ class SetResolutionTests(unittest.TestCase):
                 Path(tmp),
                 '[global]\nskills = ["listed-twice", "missing-dir"]\n'
                 '[team]\ninherits = "global"\nskills = ["listed-twice"]\n',
-                ["listed-twice", "orphan-skill"],
+                ("listed-twice", "orphan-skill"),
             )
 
             errors = "\n".join(manage.validate_sets(root))
@@ -154,7 +154,7 @@ class ConfigTests(unittest.TestCase):
             remote = init_bare_remote(root, "skills")
             runtime = clone_runtime(root, remote)
             paths = manage.StatePaths(root / "state")
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
             config.save(paths)
             loaded = manage.ManagerConfig.load(paths)
@@ -186,13 +186,29 @@ class ConfigTests(unittest.TestCase):
 
     def test_unsafe_branch_is_rejected(self) -> None:
         config = manage.ManagerConfig(
-            runtime_path="/somewhere/.agents",
+            runtime_path="/somewhere/repo",
             runtime_repo_url="https://example.invalid/skills",
             branch="../evil",
+            view_path="/somewhere/view",
+            skill_set="global",
         )
 
         with self.assertRaises(manage.ManagerError):
             config.validate()
+
+    def test_overlapping_view_and_runtime_paths_are_rejected(self) -> None:
+        for view in ("/somewhere/repo", "/somewhere/repo/view", "/somewhere"):
+            with self.subTest(view=view):
+                config = manage.ManagerConfig(
+                    runtime_path="/somewhere/repo",
+                    runtime_repo_url="https://example.invalid/skills",
+                    branch="main",
+                    view_path=view,
+                    skill_set="global",
+                )
+
+                with self.assertRaises(manage.ManagerError):
+                    config.validate()
 
 
 class RuntimeSafetyTests(unittest.TestCase):
@@ -208,7 +224,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             git(updater, "add", "new.txt")
             git(updater, "commit", "-m", "update")
             git(updater, "push", "origin", "main")
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
             manage.sync_runtime(config)
 
@@ -223,7 +239,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             git(runtime, "switch", "-c", "work-in-progress")
             marker = runtime / "draft.txt"
             marker.write_text("keep me", encoding="utf-8")
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.sync_runtime(config)
@@ -241,7 +257,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             runtime = clone_runtime(root, remote)
             marker = runtime / "README.md"
             marker.write_text("local edit\n", encoding="utf-8")
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.sync_runtime(config)
@@ -259,13 +275,132 @@ class RuntimeSafetyTests(unittest.TestCase):
             git(runtime, "add", "local.txt")
             git(runtime, "commit", "-m", "local work")
             head_before = git(runtime, "rev-parse", "HEAD").stdout.strip()
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
             with self.assertRaises(manage.RuntimeSafetyError):
                 manage.sync_runtime(config)
 
             self.assertEqual(
                 git(runtime, "rev-parse", "HEAD").stdout.strip(), head_before
+            )
+
+
+TEAM_SETS = (
+    '[global]\nskills = ["base-a"]\n'
+    '[team]\ninherits = "global"\nskills = ["team-a"]\n'
+)
+
+
+def publish(root: Path, remote: Path, label: str, sets_toml: str,
+            skills: tuple[str, ...]) -> None:
+    work = root / label
+    git(root, "clone", str(remote), str(work))
+    git(work, "config", "user.name", "Tests")
+    git(work, "config", "user.email", "tests@example.invalid")
+    write_sets(work, sets_toml, skills)
+    git(work, "add", "-A")
+    git(work, "commit", "-m", f"publish {label}")
+    git(work, "push", "origin", "main")
+
+
+class MaterializeTests(unittest.TestCase):
+    def test_child_subscription_materializes_inherited_union(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = init_bare_remote(root, "skills")
+            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            runtime = clone_runtime(root, remote)
+            view = root / "view"
+            config = manage.ManagerConfig.new(
+                runtime, str(remote), view, skill_set="team"
+            )
+
+            manage.materialize_view(config)
+
+            self.assertTrue((view / "skills" / "base-a" / "SKILL.md").is_file())
+            self.assertTrue((view / "skills" / "team-a" / "SKILL.md").is_file())
+            self.assertTrue((view / manage.VIEW_MARKER).is_file())
+            installed = json.loads(
+                (view / "installed.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(installed["set"], "team")
+            self.assertEqual(installed["chain"], ["global", "team"])
+            self.assertEqual(installed["skills"], ["base-a", "team-a"])
+            self.assertEqual(
+                installed["source_sha"],
+                git(runtime, "rev-parse", "HEAD").stdout.strip(),
+            )
+
+    def test_sync_rebuilds_view_after_remote_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = init_bare_remote(root, "skills")
+            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            runtime = clone_runtime(root, remote)
+            view = root / "view"
+            paths = manage.StatePaths(root / "state")
+            config = manage.ManagerConfig.new(
+                runtime, str(remote), view, skill_set="team"
+            )
+            config.save(paths)
+            args = type("Args", (), {"state_dir": str(paths.root)})()
+
+            manage.sync_command(args)
+            self.assertFalse((view / "skills" / "base-b").exists())
+
+            updated = TEAM_SETS.replace('["base-a"]', '["base-a", "base-b"]')
+            publish(root, remote, "update", updated, ("base-b",))
+            manage.sync_command(args)
+
+            self.assertTrue((view / "skills" / "base-b" / "SKILL.md").is_file())
+            installed = json.loads(
+                (view / "installed.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(installed["skills"], ["base-a", "base-b", "team-a"])
+
+    def test_unmanaged_view_directory_is_never_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = init_bare_remote(root, "skills")
+            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            runtime = clone_runtime(root, remote)
+            view = root / "view"
+            view.mkdir()
+            precious = view / "notes.txt"
+            precious.write_text("mine\n", encoding="utf-8")
+            config = manage.ManagerConfig.new(
+                runtime, str(remote), view, skill_set="team"
+            )
+
+            with self.assertRaises(manage.RuntimeSafetyError):
+                manage.materialize_view(config)
+
+            self.assertEqual(precious.read_text(), "mine\n")
+
+    def test_broken_manifest_preserves_previous_view(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = init_bare_remote(root, "skills")
+            publish(root, remote, "seed", TEAM_SETS, ("base-a", "team-a"))
+            runtime = clone_runtime(root, remote)
+            view = root / "view"
+            config = manage.ManagerConfig.new(
+                runtime, str(remote), view, skill_set="team"
+            )
+            manage.materialize_view(config)
+            snapshot = json.loads(
+                (view / "installed.json").read_text(encoding="utf-8")
+            )
+
+            publish(root, remote, "break", "not valid toml [", ())
+            manage.sync_runtime(config)
+            with self.assertRaises(manage.ManagerError):
+                manage.materialize_view(config)
+
+            self.assertTrue((view / "skills" / "base-a" / "SKILL.md").is_file())
+            self.assertEqual(
+                json.loads((view / "installed.json").read_text(encoding="utf-8")),
+                snapshot,
             )
 
 
@@ -276,7 +411,7 @@ class OperationalTests(unittest.TestCase):
             remote = init_bare_remote(root, "skills")
             runtime = clone_runtime(root, remote)
             paths = manage.StatePaths(root / "state")
-            config = manage.ManagerConfig.new(runtime, str(remote))
+            config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
             config.save(paths)
             (runtime / "dirty.txt").write_text("keep\n", encoding="utf-8")
             args = type("Args", (), {"state_dir": str(paths.root)})()

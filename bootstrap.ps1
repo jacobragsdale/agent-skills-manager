@@ -5,10 +5,11 @@
 #
 #   irm https://<internal-host>/bootstrap.ps1 | iex
 #
-# The skills clone at %USERPROFILE%\.agents is runtime-only. All mutable state
-# (logs, config, and locks) lives under %LOCALAPPDATA%\AgentSkills. The nightly
-# task fast-forwards a clean runtime; it never resets or pushes the skills
-# repository.
+# The skills repository is cloned under %LOCALAPPDATA%\AgentSkills\repo and
+# treated as internal state. %USERPROFILE%\.agents is a generated view holding
+# only the skills of this machine's subscribed skill set; Cursor reads it and
+# the nightly sync rebuilds it. The nightly task fast-forwards a clean clone;
+# it never resets or pushes the skills repository.
 #
 # This file stays ASCII because Windows PowerShell 5.1 reads BOM-less scripts
 # fetched over HTTP as ANSI.
@@ -17,6 +18,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoUrl = '',
+    [string]$SkillSet = 'global',
     [string]$TaskTime = '02:00'
 )
 
@@ -24,9 +26,11 @@ param(
 $DefaultRepoUrl = ''
 
 $ErrorActionPreference = 'Stop'
-$RuntimeDir = Join-Path $HOME '.agents'
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set for this Windows user.' }
 $StateDir = Join-Path $env:LOCALAPPDATA 'AgentSkills'
+$RuntimeDir = Join-Path $StateDir 'repo'
+$ViewDir = Join-Path $HOME '.agents'
+$ViewMarker = Join-Path $ViewDir '.agent-skills-managed'
 $ToolsDir = Join-Path $StateDir 'tools'
 $PythonDir = Join-Path $StateDir 'python'
 $UvCacheDir = Join-Path $StateDir 'uv-cache'
@@ -262,10 +266,18 @@ if (-not $RepoUrl) {
     throw 'No skills repo URL. Pass -RepoUrl, set AGENT_SKILLS_REPO_URL, or configure $DefaultRepoUrl.'
 }
 Write-Note "Skills (read-only): $RepoUrl"
-Write-Note "Runtime: $RuntimeDir"
-Write-Note "Local state: $StateDir"
+Write-Note "Skill set: $SkillSet"
+Write-Note "Runtime clone: $RuntimeDir"
+Write-Note "Skills view (Cursor reads this): $ViewDir"
 
 Write-Step 'Installing the read-only runtime checkout'
+if (Test-Path (Join-Path $ViewDir '.git')) {
+    throw "$ViewDir is a Git clone from an older layout. Remove it per the README, then re-run."
+}
+if ((Test-Path $ViewDir) -and -not (Test-Path $ViewMarker)) {
+    throw "$ViewDir exists but is not a managed skills view. Move it aside, then re-run."
+}
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 if (Test-Path (Join-Path $RuntimeDir '.git')) {
     $existing = git -C $RuntimeDir remote get-url origin
     if ($existing -ne $RepoUrl) {
@@ -287,7 +299,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $StateDir 'logs') | Out-Nul
 Push-Location $RuntimeDir
 try {
     & $pythonPath manage.py configure --runtime-path $RuntimeDir --repo-url $RepoUrl `
-        --branch main --state-dir $StateDir
+        --view-path $ViewDir --skill-set $SkillSet --branch main --state-dir $StateDir
     if ($LASTEXITCODE -ne 0) { throw 'Manager configuration failed.' }
 } finally {
     Pop-Location
@@ -323,7 +335,7 @@ if (-not $healthy) {
     exit 1
 }
 Write-Host "All set (took ${elapsed}s). Cursor can now discover the team skills." -ForegroundColor Green
-Write-Host "  Runtime: $RuntimeDir"
-Write-Host "  Local state and logs: $StateDir"
-Write-Host '  Repair expired sign-in: double-click fix-signin.cmd in the runtime folder.'
+Write-Host "  Skills view: $ViewDir (skill set '$SkillSet')"
+Write-Host "  Runtime clone, state, and logs: $StateDir"
+Write-Host '  Repair expired sign-in: double-click fix-signin.cmd in your .agents folder.'
 Write-Host '  Try: open Cursor and ask "set up this Python repo to our standards".'
