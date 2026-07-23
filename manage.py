@@ -6,8 +6,9 @@
 """Safely install and update the team skill pack.
 
 The skills repository is cloned under local state and treated as a runtime
-appliance: member machines only fetch and fast-forward it, never push, reset,
-or rewrite it. Sync rebuilds ~/.agents from every skill under skills/.
+appliance: sync restores it to the configured remote branch, discarding local
+checkout changes, and never pushes. Sync rebuilds ~/.agents from every skill
+under skills/.
 """
 
 from __future__ import annotations
@@ -353,7 +354,9 @@ def runtime_head(runtime: Path) -> str:
     return head
 
 
-def validate_runtime(config: ManagerConfig) -> Path:
+def validate_runtime(
+    config: ManagerConfig, *, require_clean: bool = True
+) -> Path:
     runtime = Path(config.runtime_path).resolve()
     if not runtime.is_dir() or not (runtime / ".git").exists():
         raise RuntimeSafetyError(f"configured runtime is not a Git clone: {runtime}")
@@ -367,17 +370,21 @@ def validate_runtime(config: ManagerConfig) -> Path:
         raise RuntimeSafetyError(
             f"runtime origin is {origin!r}, expected {config.runtime_repo_url!r}"
         )
-    dirty = git(runtime, "status", "--porcelain", "--untracked-files=all").stdout.strip()
-    if dirty:
-        first = dirty.splitlines()[0]
-        raise RuntimeSafetyError(
-            f"runtime checkout is dirty ({first}); refusing to discard local files"
-        )
+    if require_clean:
+        dirty = git(
+            runtime, "status", "--porcelain", "--untracked-files=all"
+        ).stdout.strip()
+        if dirty:
+            first = dirty.splitlines()[0]
+            raise RuntimeSafetyError(
+                f"runtime checkout is dirty ({first}); run 'manage.py sync' "
+                "to restore the managed checkout"
+            )
     return runtime
 
 
 def sync_runtime(config: ManagerConfig) -> None:
-    runtime = validate_runtime(config)
+    runtime = validate_runtime(config, require_clean=False)
     fetch = git(runtime, "fetch", "origin", "--prune", check=False, network=True)
     if fetch.returncode != 0:
         if is_auth_failure(fetch):
@@ -391,19 +398,29 @@ def sync_runtime(config: ManagerConfig) -> None:
     verify = git(runtime, "rev-parse", "--verify", remote, check=False)
     if verify.returncode != 0:
         raise RuntimeSafetyError(f"remote branch does not exist: {remote}")
+    dirty = git(
+        runtime, "status", "--porcelain", "--untracked-files=all"
+    ).stdout.strip()
+    cleanable = git(runtime, "clean", "-ndx").stdout.strip()
     counts = git(
         runtime, "rev-list", "--left-right", "--count", f"HEAD...{remote}"
     ).stdout.split()
     if len(counts) != 2:
         raise RuntimeSafetyError("could not determine runtime divergence")
     ahead, behind = (int(value) for value in counts)
-    if ahead:
-        raise RuntimeSafetyError(
-            f"runtime has {ahead} local commit(s); refusing to rewrite them"
+    remote_head = git(runtime, "rev-parse", remote).stdout.strip()
+
+    git(runtime, "reset", "--hard", remote)
+    git(runtime, "clean", "-ffdx")
+    validate_runtime(config)
+
+    if dirty or cleanable or ahead:
+        log(
+            f"runtime: restored {remote} at {remote_head[:12]} and discarded "
+            "local checkout changes"
         )
-    if behind:
-        git(runtime, "merge", "--ff-only", remote)
-        log(f"runtime: fast-forwarded {behind} commit(s) from {remote}")
+    elif behind:
+        log(f"runtime: updated {behind} commit(s) to {remote_head[:12]}")
     else:
         log(f"runtime: already current at {runtime_head(runtime)[:12]}")
 
@@ -656,7 +673,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(handler=doctor_command)
 
     sync = subparsers.add_parser(
-        "sync", help="fast-forward the clean runtime and rebuild the skills view"
+        "sync", help="restore the runtime from origin and rebuild the skills view"
     )
     _add_state_arg(sync)
     sync.set_defaults(handler=sync_command)

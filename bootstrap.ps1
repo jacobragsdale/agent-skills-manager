@@ -8,7 +8,7 @@
 # The skills repository is cloned under %LOCALAPPDATA%\AgentSkills\repo and
 # treated as internal state. %USERPROFILE%\.agents is a generated view holding
 # every skill in the repository. The nightly task pulls updates and rebuilds
-# that view; it never resets or pushes the skills repository.
+# that view. Sync restores the internal clone to origin and never pushes it.
 #
 # This file stays ASCII because Windows PowerShell 5.1 reads BOM-less scripts
 # fetched over HTTP as ANSI.

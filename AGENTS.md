@@ -7,9 +7,11 @@ generated, marker-guarded view holding every skill, and Cursor reads it.
 
 ## Boundaries
 
-- Client code may fetch and fast-forward the skills repository but never push,
-  reset, switch branches, rebase, or discard clone files. The view is only
-  replaced when its marker file proves a previous run generated it.
+- Client code may fetch and restore the validated runtime clone to its configured
+  remote branch, discarding tracked edits, local commits, and untracked or
+  ignored files. It must verify the expected origin and branch first, and never
+  push, switch branches, or rebase. The view is only replaced when its marker
+  file proves a previous run generated it.
 - The client records and transmits nothing. There is no telemetry and no
   feedback pipeline; do not add invocation, outcome, heartbeat, fleet,
   adoption, duration, or productivity events.
@@ -45,7 +47,7 @@ Every skill must:
 
 ## Plumbing
 
-- `manage.py` owns configuration, safe fast-forward sync, validation, and view
+- `manage.py` owns configuration, safe remote reconciliation, validation, and view
   materialization. It stays a zero-dependency uv script.
 - `bootstrap.ps1` installs pinned, checksum-verified Git and uv releases plus a
   uv-managed Python under LocalAppData, creates runtime/state, and registers the

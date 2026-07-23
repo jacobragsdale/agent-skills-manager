@@ -169,7 +169,7 @@ class ConfigTests(unittest.TestCase):
 
 
 class RuntimeSafetyTests(unittest.TestCase):
-    def test_clean_runtime_fast_forwards_only(self) -> None:
+    def test_clean_runtime_updates_to_remote(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -207,21 +207,30 @@ class RuntimeSafetyTests(unittest.TestCase):
             )
             self.assertEqual(marker.read_text(), "keep me")
 
-    def test_dirty_runtime_is_not_reset(self) -> None:
+    def test_dirty_runtime_is_restored_to_remote(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
             runtime = clone_runtime(root, remote)
-            marker = runtime / "README.md"
-            marker.write_text("local edit\n", encoding="utf-8")
+            tracked = runtime / "README.md"
+            untracked = runtime / "untracked.txt"
+            ignored = runtime / "ignored.cache"
+            tracked.write_text("local edit\n", encoding="utf-8")
+            untracked.write_text("local file\n", encoding="utf-8")
+            (runtime / ".git" / "info" / "exclude").write_text(
+                "ignored.cache\n", encoding="utf-8"
+            )
+            ignored.write_text("local cache\n", encoding="utf-8")
             config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
-            with self.assertRaises(manage.RuntimeSafetyError):
-                manage.sync_runtime(config)
+            manage.sync_runtime(config)
 
-            self.assertEqual(marker.read_text(), "local edit\n")
+            self.assertEqual(tracked.read_text(), "# skills\n")
+            self.assertFalse(untracked.exists())
+            self.assertFalse(ignored.exists())
+            self.assertEqual(git(runtime, "status", "--porcelain").stdout, "")
 
-    def test_local_commits_are_never_rewritten(self) -> None:
+    def test_local_commits_are_restored_to_remote(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
@@ -231,15 +240,15 @@ class RuntimeSafetyTests(unittest.TestCase):
             (runtime / "local.txt").write_text("local\n", encoding="utf-8")
             git(runtime, "add", "local.txt")
             git(runtime, "commit", "-m", "local work")
-            head_before = git(runtime, "rev-parse", "HEAD").stdout.strip()
+            remote_head = git(runtime, "rev-parse", "origin/main").stdout.strip()
             config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
 
-            with self.assertRaises(manage.RuntimeSafetyError):
-                manage.sync_runtime(config)
+            manage.sync_runtime(config)
 
             self.assertEqual(
-                git(runtime, "rev-parse", "HEAD").stdout.strip(), head_before
+                git(runtime, "rev-parse", "HEAD").stdout.strip(), remote_head
             )
+            self.assertFalse((runtime / "local.txt").exists())
 
 
 def publish(root: Path, remote: Path, label: str, skills: tuple[str, ...]) -> None:
@@ -356,10 +365,11 @@ class MaterializeTests(unittest.TestCase):
 
 
 class OperationalTests(unittest.TestCase):
-    def test_sync_fails_on_dirty_runtime_without_discarding_files(self) -> None:
+    def test_sync_discards_dirty_runtime_and_rebuilds_view(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             remote = init_bare_remote(root, "skills")
+            publish(root, remote, "pack", ("base-a",))
             runtime = clone_runtime(root, remote)
             paths = manage.StatePaths(root / "state")
             config = manage.ManagerConfig.new(runtime, str(remote), root / "view")
@@ -367,10 +377,12 @@ class OperationalTests(unittest.TestCase):
             (runtime / "dirty.txt").write_text("keep\n", encoding="utf-8")
             args = type("Args", (), {"state_dir": str(paths.root)})()
 
-            with self.assertRaises(manage.ManagerError):
-                manage.sync_command(args)
+            manage.sync_command(args)
 
-            self.assertEqual((runtime / "dirty.txt").read_text(), "keep\n")
+            self.assertFalse((runtime / "dirty.txt").exists())
+            self.assertTrue(
+                (root / "view" / "skills" / "base-a" / "SKILL.md").is_file()
+            )
 
     def test_second_process_lock_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

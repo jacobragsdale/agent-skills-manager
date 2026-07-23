@@ -78,13 +78,16 @@ Nightly updates require no action after that.
 ```
 
 `AgentSkillsNightly` runs `manage.py sync` once a day. Sync verifies that the
-clone has the expected origin and branch and has no local changes, fetches the
-remote, fast-forwards `main`, validates every skill, and replaces the generated
-view.
+clone has the expected origin and branch, fetches the remote, restores the
+checkout exactly to `origin/main`, validates every skill, and replaces the
+generated view. Tracked edits, local commits, and untracked or ignored files in
+the runtime clone are discarded; it is internal state, not a development
+checkout.
 
-The manager never pushes, resets, rebases, switches branches, or discards clone
-files. It only replaces a view carrying its marker. If an invalid skill reaches
-`main`, the previous working view remains in place.
+The manager never pushes, rebases, or switches branches. It resets and cleans
+only the configured runtime clone after its origin and branch match the saved
+configuration. It only replaces a view carrying its marker. If an invalid skill
+reaches `main`, the previous working view remains in place.
 
 The client records and transmits nothing. Its only network traffic is the Git
 fetch, subject to the Git provider's normal authentication and audit records.
